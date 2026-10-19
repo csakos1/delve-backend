@@ -18,7 +18,7 @@ from delve.api import rest, ws
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
-from delve.hermes.client import HermesClient, HermesError, HermesUnavailable, ThinkingRoute
+from delve.hermes.client import HermesClient, ThinkingRoute
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
 
@@ -52,19 +52,17 @@ def create_app(
             hub,
             timing=timing,
             approval_timeout_s=settings.hermes_approval_timeout_s,
+            expected_version=settings.hermes_expected_version,
         )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
-        app.state.approvals = ApprovalService(sessionmaker, hermes, hub)
-        app.state.hermes_version = None
-        probe = asyncio.create_task(_probe_hermes(app, hermes))
+        app.state.approvals = ApprovalService(sessionmaker, hermes, hub, manager)
         if run_worker:
             await manager.start()
         log.info("startup", extra={"version": __version__, "bind": settings.bind})
         try:
             yield
         finally:
-            probe.cancel()
             await manager.close()
             await hermes.aclose()
             await engine.dispose()
@@ -107,26 +105,6 @@ def create_app(
         }
 
     return app
-
-
-async def _probe_hermes(app: FastAPI, hermes: HermesClient) -> None:
-    """Record the Hermes version for hello.ok; the health monitor (plan 6.9) comes later."""
-    delay = 1.0
-    while True:
-        try:
-            health = await hermes.health()
-            app.state.hermes_version = health.version
-            expected = app.state.settings.hermes_expected_version
-            if health.version != expected:
-                log.warning(
-                    "unexpected hermes version",
-                    extra={"version": health.version, "expected": expected},
-                )
-            return
-        except (HermesError, HermesUnavailable, ValueError) as exc:
-            log.info("hermes not reachable yet", extra={"error": str(exc)})
-        await asyncio.sleep(delay)
-        delay = min(delay * 2, 60.0)
 
 
 def app_factory() -> FastAPI:

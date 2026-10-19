@@ -95,7 +95,8 @@ class FakeHermes:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.messages: dict[str, dict[str, Any]] = {}
         self.requests: list[Recorded] = []
-        self.fail_next: list[tuple[int, dict[str, Any]]] = []
+        self.fail_next: list[tuple[int, dict[str, Any]]] = []  # never applied to /health
+        self.health_down = False
         self.app = self._build()
 
     # --- scripting ----------------------------------------------------------
@@ -135,7 +136,11 @@ class FakeHermes:
                 )
             )
             authorized = request.headers.get("authorization") == f"Bearer {API_KEY}"
-            if request.url.path != "/health" and not authorized:
+            if request.url.path == "/health":
+                if fake.health_down:
+                    return _err(503, "unavailable", "gateway restarting")
+                return await call_next(request)  # type: ignore[no-any-return]
+            if not authorized:
                 return _err(401, "invalid_api_key", "Invalid API key")
             if fake.fail_next:
                 status, payload = fake.fail_next.pop(0)

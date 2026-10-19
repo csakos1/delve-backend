@@ -101,7 +101,7 @@ async def _handshake(ws: WebSocket, hub: EventHub, data: dict[str, Any], state: 
             "type": "hello.ok",
             "data": {
                 "server_version": __version__,
-                "hermes_version": getattr(state, "hermes_version", None),
+                "hermes_version": state.run_manager.hermes_version,
                 "epoch": hub.epoch,
                 "seq": hub.seq,
                 "resync_required": resync,

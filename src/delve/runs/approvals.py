@@ -13,6 +13,7 @@ from delve.db.models import Approval
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, HermesError, HermesUnavailable
 from delve.hermes.models import ALLOWED_CHOICES
+from delve.runs.manager import LateApprovalError, NotFound, RunManager
 from delve.runs.steps import STATUS_FOR_CHOICE
 from delve.serialize import approval_out
 
@@ -35,9 +36,14 @@ class ApprovalError(Exception):
 
 class ApprovalService:
     def __init__(
-        self, sessionmaker: async_sessionmaker[AsyncSession], hermes: HermesClient, hub: EventHub
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        hermes: HermesClient,
+        hub: EventHub,
+        manager: RunManager | None = None,
     ) -> None:
         self._sm = sessionmaker
+        self._manager = manager  # for late approvals
         self._hermes = hermes
         self._hub = hub
         self._locks: dict[str, asyncio.Lock] = {}
@@ -78,10 +84,9 @@ class ApprovalService:
                 raise ApprovalError("approval_not_found", "approval not found", 404)
             status, run_id = approval.status, approval.run_id
         if status == "expired_in_hermes":
-            raise ApprovalError(
-                "approval_expired_in_hermes",
-                "Hermes no longer waits for this approval; late approval is not available yet",
-            )
+            return await self._late(request_id, choice, decided_by)
+        if status == "expired":
+            raise ApprovalError("approval_expired", "the approval has expired")
         if status != "pending":
             raise ApprovalError("approval_already_decided", f"approval is {status}")
 
@@ -94,9 +99,8 @@ class ApprovalService:
                 changed = await self._mark_gone(request_id)
                 if changed is not None:
                     self._hub.publish("approval.updated", changed)
-                    raise ApprovalError(
-                        "approval_expired_in_hermes", "Hermes no longer waits for this approval"
-                    ) from exc
+                    # Hermes gave up just now: the same answer becomes a late approval
+                    return await self._late(request_id, choice, decided_by)
                 # someone else (another device, the stream) settled it in the meantime
                 raise ApprovalError("approval_already_decided", "approval was decided") from exc
             raise ApprovalError(f"hermes_{exc.code or exc.status}", exc.message, 502) from exc
@@ -129,6 +133,41 @@ class ApprovalService:
         )  # fmt: skip
         self._hub.publish("approval.updated", out)
         return out
+
+    async def _late(self, request_id: str, choice: str, decided_by: str) -> dict[str, Any]:
+        if choice == "deny":
+            async with self._sm() as s:
+                row = (
+                    await s.execute(
+                        update(Approval)
+                        .where(
+                            Approval.request_id == request_id,
+                            Approval.status == "expired_in_hermes",
+                        )
+                        .values(
+                            status="denied",
+                            choice="deny",
+                            decided_by=decided_by,
+                            responded_at=func.now(),
+                        )
+                        .returning(Approval)
+                    )
+                ).scalar_one_or_none()
+                await s.commit()
+                out = approval_out(row) if row is not None else None
+            if out is None:
+                raise ApprovalError("approval_already_decided", "approval was decided")
+            self._hub.publish("approval.updated", out)
+            return out
+        if self._manager is None:
+            raise ApprovalError("late_approval_unavailable", "late approval is not available")
+        try:
+            return await self._manager.start_followup(request_id, choice, decided_by)
+        except LateApprovalError as exc:
+            code = "approval_already_decided" if exc.code == "approval_not_late" else exc.code
+            raise ApprovalError(code, exc.message) from exc
+        except NotFound as exc:
+            raise ApprovalError("approval_not_found", "approval not found", 404) from exc
 
     async def _mark_gone(self, request_id: str) -> dict[str, Any] | None:
         async with self._sm() as s:

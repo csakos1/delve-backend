@@ -26,7 +26,8 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 2 | SSE parser, Hermes client, fake Hermes for tests | done |
 | 3 | Run queue, state machine, minimal REST + WebSocket, device tokens | done |
 | 4 | Tool steps, durable approvals, approval answers over WebSocket and REST | done |
-| 5 | Approval expiry, late approval, full recovery | next |
+| 5 | Approval expiry, late approval, reconciliation after a gateway restart | done |
+| 6 | Token and context usage | next |
 
 ## Development
 
@@ -110,7 +111,7 @@ events for up to an hour, and a new `epoch` after a restart means: reload over R
 Server events: `conversation.created`, `conversation.updated`, `message.created`,
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
-`approval.request`, `approval.updated`, `reasoning.final`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`approval.request`, `approval.updated`, `reasoning.final`, `health.status`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -127,7 +128,20 @@ rule; no answer can change it). Approvals are stored with the exact command, its
 an `action_class` (`pkg_upgrade`, `service_restart`, `delete_kill`, `other`), the Hermes
 deadline and a longer expiry. The app can answer `once`, `session` or `deny`; `always` is
 refused before anything reaches Hermes. If Hermes already gave up, the approval becomes
-`expired_in_hermes`.
+`expired_in_hermes` and can still be answered until `expires_at` (24 h for package
+upgrades, 2 h for service restarts, 30 min otherwise):
+
+- `deny` just records the answer;
+- `once` or `session` queues a follow-up run in the same conversation
+  (`origin: late_approval`, shown as a `system` message) that asks the agent to run exactly
+  that command. If the follow-up asks for approval of a command with the same SHA-256, the
+  backend answers `once` itself; anything else needs a fresh answer.
+
+`expired_in_hermes → late_approved → followup_started → executed | superseded`, or
+`cancelled` when the follow-up is stopped. Past `expires_at` an approval becomes `expired`.
+The backend polls Hermes' `/health`; when it comes back after an outage, approvals still
+pending for runs that no longer exist become `expired_in_hermes`. `health.status` events
+report each change.
 
 ## Pre-commit hook
 

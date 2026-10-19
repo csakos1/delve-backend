@@ -157,32 +157,6 @@ async def test_refused_choices_never_reach_hermes(h: Harness) -> None:
     assert h.fake.requests == []
 
 
-async def test_answer_after_hermes_gave_up(h: Harness) -> None:
-    rid, run_id = request_id_of("protocol/d"), run_id_of("protocol/d")
-    h.fake.enqueue(
-        "protocol/d",
-        pause_before_seq=2,
-        approvals={rid: load_json(f"protocol/approval-once-{run_id}.json")},  # not_active
-    )
-    await h.send()
-    await h.mgr.start()
-    await wait_for_pending(h, rid)
-    svc = ApprovalService(h.db, h.hermes, h.hub)
-    with pytest.raises(ApprovalError) as exc:
-        await svc.respond(rid, "once", "pixel")
-    assert exc.value.code == "approval_expired_in_hermes"
-    a = await approval(h, rid)
-    assert a is not None and a.status == "expired_in_hermes"
-
-    h.fake.runs[run_id].release.set()
-    await h.settle()
-    a = await approval(h, rid)
-    assert a is not None and a.status == "expired_in_hermes" and a.decided_by is None
-    with pytest.raises(ApprovalError) as exc:
-        await svc.respond(rid, "once", "pixel")
-    assert exc.value.code == "approval_expired_in_hermes"  # late approval: plan 12/5
-
-
 async def test_stop_while_waiting_cancels_approval(h: Harness) -> None:
     run_id, rid = run_id_of("protocol/b"), request_id_of("protocol/b")
     events = sse_events("protocol/b")[:2]

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve.db.models import (
     ACTIVE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
+    Approval,
     Conversation,
     Message,
     Run,
@@ -48,7 +49,7 @@ from delve.hermes.client import (
 )
 from delve.hermes.models import RunStatus, SessionMessage
 from delve.hermes.sse import HermesEvent, HermesProtocolError
-from delve.runs import steps
+from delve.runs import late, steps
 from delve.serialize import approval_out, conversation_out, message_out, step_out
 
 log = logging.getLogger("delve.runs")
@@ -79,6 +80,13 @@ class InvalidRequest(ValueError):
     pass
 
 
+class LateApprovalError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def now() -> datetime:
     return datetime.now(UTC)
 
@@ -94,6 +102,7 @@ class Timing:
     max_stream_failures: int = 20  # consecutive reconnects without a new event
     title_delays_s: tuple[float, ...] = (1.5, 3.0, 6.0)  # Hermes titles ~1.2 s after a run
     idle_poll_s: float = 5.0
+    maintenance_s: float = 15.0  # Hermes health poll + approval expiry sweep
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +128,7 @@ class _Ctx:
     dirty: bool = False
     last_flush: float = 0.0
     reconnects: int = 0
+    origin: str = "app"
 
 
 class RunManager:
@@ -130,9 +140,14 @@ class RunManager:
         *,
         timing: Timing | None = None,
         approval_timeout_s: int = 300,
+        expected_version: str | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
+        self._expected_version = expected_version
+        self.hermes_ok: bool | None = None  # None until the first health poll
+        self.hermes_version: str | None = None
+        self._maint: asyncio.Task[None] | None = None
         self._hermes = hermes
         self._hub = hub
         self._t = timing or Timing()
@@ -150,15 +165,17 @@ class RunManager:
     async def start(self) -> None:
         if self._task is None:
             self._task = asyncio.create_task(self._worker(), name="run-manager")
+        if self._maint is None:
+            self._maint = asyncio.create_task(self._maintenance(), name="run-maintenance")
 
     async def close(self) -> None:
-        tasks = [t for t in (self._task, *self._bg) if t is not None]
+        tasks = [t for t in (self._task, self._maint, *self._bg) if t is not None]
         for t in tasks:
             t.cancel()
         for t in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
-        self._task = None
+        self._task = self._maint = None
         self._bg.clear()
 
     def wake(self) -> None:
@@ -251,7 +268,10 @@ class RunManager:
             status = run.status
             if status == "queued":
                 run.status, run.ended_at = "cancelled", now()
+                given_back = await late.followup_not_started(s, run_id, "cancelled")
                 await s.commit()
+                for a in given_back:
+                    self._hub.publish("approval.updated", approval_out(a))
                 self._hub.publish(
                     "run.finished",
                     {"run_id": run_id, "conversation_id": run.conversation_id,
@@ -297,6 +317,123 @@ class RunManager:
         if changed:
             self._hub.publish("conversation.updated", out)
         return out
+
+    async def start_followup(self, request_id: str, choice: str, decided_by: str) -> dict[str, Any]:
+        """Late `once`/`session` for an approval Hermes gave up on (plan 6.5 step 4).
+
+        Queues a follow-up run in the same conversation; the approval becomes
+        `late_approved` and follows the run (see delve.runs.late).
+        """
+        if choice not in ("once", "session"):
+            raise InvalidRequest("a late approval is once or session")
+        async with self._sm() as s:
+            a = (
+                await s.execute(
+                    select(Approval).where(Approval.request_id == request_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if a is None:
+                raise NotFound(f"approval {request_id} not found")
+            if a.status != "expired_in_hermes":
+                raise LateApprovalError("approval_not_late", f"approval is {a.status}")
+            if a.expires_at <= now():
+                a.status = "expired"
+                await s.commit()
+                self._hub.publish("approval.updated", approval_out(a))
+                raise LateApprovalError("approval_expired", "the approval has expired")
+            conv = _must(await s.get(Conversation, a.conversation_id))
+            conv.archived, conv.updated_at = False, now()
+            qid = f"q_{uuid.uuid4().hex}"
+            text = late.late_prompt(a.command)
+            msg = Message(
+                conversation_id=conv.id,
+                run_id=qid,
+                role="system",
+                content=text,
+                client_msg_id=uuid.uuid4(),
+            )
+            run = Run(
+                run_id=qid,
+                conversation_id=conv.id,
+                idempotency_key=uuid.uuid4(),
+                status="queued",
+                input=text,
+                thinking=conv.thinking,
+                origin="late_approval",
+            )
+            a.status, a.choice, a.decided_by = "late_approved", choice, decided_by
+            a.responded_at, a.followup_run_id = now(), qid
+            s.add_all([msg, run])
+            await s.commit()
+            position = await self._position(s, run)
+            out = approval_out(a)
+            conv_out, msg_out = conversation_out(conv), message_out(msg)
+        self._hub.publish("approval.updated", out)
+        self._hub.publish("conversation.updated", conv_out)
+        self._hub.publish("message.created", {"conversation_id": conv.id, "message": msg_out})
+        self._hub.publish(
+            "run.queued",
+            {"run_id": qid, "conversation_id": conv.id, "position": position,
+             "thinking": conv.thinking, "origin": "late_approval"},
+        )  # fmt: skip
+        log.info("late approval queued", extra={"request_id": request_id, "run_id": qid})
+        self.idle.clear()
+        self.wake()
+        return out
+
+    # --- housekeeping ----------------------------------------------------------
+
+    async def _maintenance(self) -> None:
+        while True:
+            for tick in (self._health_tick, self._expire_tick):
+                try:
+                    await tick()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("maintenance step failed")
+            await asyncio.sleep(self._t.maintenance_s)
+
+    async def _health_tick(self) -> None:
+        """Poll Hermes /health; on recovery reconcile approvals (plan 6.11)."""
+        try:
+            health = await self._hermes.health()
+            ok, version = health.status == "ok", health.version
+        except (HermesError, HermesUnavailable, ValueError):
+            ok, version = False, self.hermes_version
+        was = self.hermes_ok
+        self.hermes_ok, self.hermes_version = ok, version
+        if was == ok or (was is None and ok):  # the first good poll is not news
+            return
+        if ok and self._expected_version and version != self._expected_version:
+            log.warning(
+                "unexpected hermes version",
+                extra={"version": version, "expected": self._expected_version},
+            )
+        self._hub.publish(
+            "health.status", {"hermes": "ok" if ok else "down", "hermes_version": version}
+        )
+        log.info("hermes health changed", extra={"ok": ok, "version": version})
+        if ok and was is False:
+            await self._reconcile()
+
+    async def _expire_tick(self) -> None:
+        async with self._sm() as s:
+            expired = await late.expire_due(s, now())
+            await s.commit()
+            outs = [approval_out(a) for a in expired]
+        for o in outs:
+            self._hub.publish("approval.updated", o)
+
+    async def _reconcile(self) -> None:
+        async with self._sm() as s:
+            changed = await late.reconcile_pending(s, self.active_run_id)
+            await s.commit()
+            outs = [approval_out(a) for a in changed]
+        for o in outs:
+            self._hub.publish("approval.updated", o)
+        if outs:
+            log.info("pending approvals reconciled", extra={"count": len(outs)})
 
     # --- helpers for submit ----------------------------------------------------
 
@@ -404,6 +541,7 @@ class RunManager:
                         await self._consume(ctx)
             finally:
                 self.active_run_id = None
+        await self._reconcile()
 
     # --- one run ---------------------------------------------------------------
 
@@ -417,7 +555,7 @@ class RunManager:
             run.status, run.started_at = "starting", run.started_at or now()
             await s.commit()
             conv_id, thinking, text, key = conv.id, run.thinking, run.input, run.idempotency_key
-            instructions = run.instructions
+            instructions, origin = run.instructions, run.origin
         self.active_run_id = qid
 
         created = await self._create_with_retry(
@@ -441,6 +579,7 @@ class RunManager:
                 conversation_id=conv_id, run_id=run_id, role="assistant", status="streaming"
             )
             s.add(msg)
+            followed = await late.followup_started(s, qid, run_id)
             await s.commit()
             msg_out = message_out(msg)
         self._renamed[qid] = run_id
@@ -450,8 +589,18 @@ class RunManager:
             {"run_id": run_id, "queued_id": qid, "conversation_id": conv_id, "thinking": thinking},
         )
         self._hub.publish("message.created", {"conversation_id": conv_id, "message": msg_out})
+        for a in followed:
+            self._hub.publish("approval.updated", approval_out(a))
 
-        ctx = _Ctx(run_id, conv_id, msg.id, thinking, "running", last_flush=time.monotonic())
+        ctx = _Ctx(
+            run_id,
+            conv_id,
+            msg.id,
+            thinking,
+            "running",
+            last_flush=time.monotonic(),
+            origin=origin,
+        )
         if qid in self._stop_requested:
             self._stop_requested.discard(qid)
             self._ctx = ctx
@@ -510,7 +659,10 @@ class RunManager:
                 .where(Run.run_id == qid)
                 .values(status=status, ended_at=now(), error=error)
             )
+            given_back = await late.followup_not_started(s, qid, status)
             await s.commit()
+        for a in given_back:
+            self._hub.publish("approval.updated", approval_out(a))
         self._hub.publish(
             "run.finished",
             {"run_id": qid, "conversation_id": conv_id, "status": status, "usage": None,
@@ -546,7 +698,9 @@ class RunManager:
                 .scalars()
                 .all()
             )
-            ctx = _Ctx(run_id, run.conversation_id, msg.id, run.thinking, run.status)
+            ctx = _Ctx(
+                run_id, run.conversation_id, msg.id, run.thinking, run.status, origin=run.origin
+            )
         for ev in events:
             ctx.last_seq = ev.seq
             if ev.event == "message.delta" and isinstance(ev.payload.get("delta"), str):
@@ -639,6 +793,7 @@ class RunManager:
         base = {"run_id": ctx.run_id, "conversation_id": ctx.conversation_id}
         out: list[tuple[str, dict[str, Any]]] = []
         new_status: str | None = None
+        auto: tuple[str, str] | None = None
         async with self._sm() as s:
             inserted = await s.scalar(
                 pg_insert(RunEvent)
@@ -673,6 +828,12 @@ class RunManager:
                     payload = approval_out(req, steps.offered_choices(data.get("choices")))
                     payload["step_id"] = req_step.id if req_step is not None else None
                     out.append(("approval.request", payload))
+                    if ctx.origin == "late_approval":
+                        orig, same = await late.match_followup(s, ctx.run_id, req)
+                        if same and orig is not None:
+                            auto = (req.request_id, orig.request_id)
+                        elif orig is not None:
+                            out.append(("approval.updated", approval_out(orig)))
                 new_status = "waiting_for_approval"
             elif name == "approval.responded":
                 answered = await steps.record_approval_responded(s, data)
@@ -705,6 +866,26 @@ class RunManager:
             self._hub.publish(type_, payload)
         if new_status is not None:
             await self._set_status(ctx, new_status)
+        if auto is not None:
+            await self._auto_approve(ctx, *auto)
+
+    async def _auto_approve(self, ctx: _Ctx, request_id: str, orig_request_id: str) -> None:
+        """Same command as the late-approved one: answer `once` for the user."""
+        try:
+            await self._hermes.respond_approval(ctx.run_id, request_id, "once")
+        except (HermesError, HermesUnavailable) as exc:
+            # the request stays pending; the user can still answer it by hand
+            log.warning(
+                "late approval auto-answer failed",
+                extra={"run_id": ctx.run_id, "request_id": request_id, "error": str(exc)},
+            )
+            return
+        async with self._sm() as s:
+            changed = await late.auto_approved(s, request_id, orig_request_id)
+            await s.commit()
+            outs = [approval_out(a) for a in changed]
+        for o in outs:
+            self._hub.publish("approval.updated", o)
 
     async def _flush(self, ctx: _Ctx, *, force: bool = False) -> None:
         if not ctx.dirty:
@@ -759,6 +940,8 @@ class RunManager:
             msg = _must(await s.get(Message, ctx.message_id))
             msg.content, msg.interim, msg.status = content, interim, MESSAGE_STATUS_FOR[status]
             open_steps, open_approvals = await steps.settle_open(s, ctx.run_id, status, now())
+            if ctx.origin == "late_approval":
+                open_approvals += await late.settle_followup(s, ctx.run_id, status)
             await s.execute(
                 update(Conversation)
                 .where(Conversation.id == ctx.conversation_id)
