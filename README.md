@@ -25,7 +25,8 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 1 | Repository skeleton, config, logging, database schema (Alembic) | done |
 | 2 | SSE parser, Hermes client, fake Hermes for tests | done |
 | 3 | Run queue, state machine, minimal REST + WebSocket, device tokens | done |
-| 4–5 | Tool steps, approvals, timeouts, late approval, full recovery | next |
+| 4 | Tool steps, durable approvals, approval answers over WebSocket and REST | done |
+| 5 | Approval expiry, late approval, full recovery | next |
 
 ## Development
 
@@ -85,6 +86,8 @@ Every endpoint except `/api/v1/health` and `/api/v1/meta` needs
 | `GET` | `/api/v1/conversations/{id}` | one conversation |
 | `GET` | `/api/v1/conversations/{id}/messages?before=&limit=` | oldest first |
 | `PATCH` | `/api/v1/conversations/{id}` | `{thinking?, archived?}` |
+| `GET` | `/api/v1/approvals?status=pending,expired_in_hermes` | approval inbox |
+| `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
 | `WS` | `/api/v1/ws` | see below |
 
 ### WebSocket
@@ -100,19 +103,31 @@ events for up to an hour, and a new `epoch` after a restart means: reload over R
 | `chat.send {text, client_msg_id, conversation_id?, thinking?}` | `ack {conversation_id, message_id, run_id, replayed}` |
 | `conversation.set {conversation_id, thinking?, archived?}` | `ack {conversation}` |
 | `run.stop {run_id}` (queue id or Hermes id) | `ack {status}` |
+| `approval.respond {request_id, choice}` | `ack {approval}` |
 | `sync {conversation_id, after_message_id?}` | `ack {conversation, messages, has_more}` |
 | `ping` | `pong` |
 
 Server events: `conversation.created`, `conversation.updated`, `message.created`,
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
-`run.updated`, `run.finished`, `tool.started`, `tool.completed`, `reasoning.final`,
-`error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
+`approval.request`, `approval.updated`, `reasoning.final`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
 (`run.started` carries both). While a run streams, the assistant message holds the streamed
 text; when it completes, `content` becomes the run's final output and the agent's interim
-remarks ("I'll try …") move to `interim`.
+remarks ("I'll try …") move to `interim`. Assistant messages from REST and `sync` carry
+their run's `tool_steps`, each with its `approval` if Hermes asked for one.
+
+### Tool steps and approvals
+
+A step's `status` is `running`, `ok`, `error`, `cancelled` (stopped), `denied` (the user
+said no), `timeout` (no answer before the Hermes approval timeout) or `blocked` (a deny
+rule; no answer can change it). Approvals are stored with the exact command, its SHA-256,
+an `action_class` (`pkg_upgrade`, `service_restart`, `delete_kill`, `other`), the Hermes
+deadline and a longer expiry. The app can answer `once`, `session` or `deny`; `always` is
+refused before anything reaches Hermes. If Hermes already gave up, the approval becomes
+`expired_in_hermes`.
 
 ## Pre-commit hook
 

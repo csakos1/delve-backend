@@ -16,10 +16,12 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
 from delve.db.models import Conversation, Message
+from delve.runs.approvals import DEFAULT_LIST_STATUSES, ApprovalError, ApprovalService
 from delve.runs.manager import NotFound, RunManager
-from delve.serialize import conversation_out, message_out
+from delve.serialize import conversation_out
 
 
 def _sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -119,10 +121,11 @@ async def list_messages(
         if before is not None:
             q = q.where(Message.id < before)
         rows = list((await s.execute(q.order_by(Message.id.desc()).limit(limit + 1))).scalars())
-    more = len(rows) > limit
-    rows = rows[:limit]
-    rows.reverse()
-    return {"data": [message_out(m) for m in rows], "has_more": more}
+        more = len(rows) > limit
+        rows = rows[:limit]
+        rows.reverse()
+        data = await messages_with_steps(s, rows)
+    return {"data": data, "has_more": more}
 
 
 class ConversationPatch(BaseModel):
@@ -142,6 +145,38 @@ async def patch_conversation(
         )
     except NotFound as exc:
         raise _not_found("conversation") from exc
+
+
+def _approvals(request: Request) -> ApprovalService:
+    svc: ApprovalService = request.app.state.approvals
+    return svc
+
+
+@router.get("/approvals")
+async def list_approvals(
+    request: Request,
+    _device: Device,
+    status: str = ",".join(DEFAULT_LIST_STATUSES),
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    statuses = tuple(x for x in (p.strip() for p in status.split(",")) if x)
+    return {"data": await _approvals(request).list(statuses, limit)}
+
+
+class ApprovalAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choice: str
+
+
+@router.post("/approvals/{request_id}")
+async def answer_approval(
+    request: Request, device: Device, request_id: str, body: ApprovalAnswer
+) -> Any:
+    try:
+        return await _approvals(request).respond(request_id, body.choice, device.name)
+    except ApprovalError as exc:
+        raise HTTPException(exc.http_status, {"code": exc.code, "message": exc.message}) from exc
 
 
 def _not_found(what: str) -> HTTPException:

@@ -20,7 +20,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -48,7 +48,8 @@ from delve.hermes.client import (
 )
 from delve.hermes.models import RunStatus, SessionMessage
 from delve.hermes.sse import HermesEvent, HermesProtocolError
-from delve.serialize import conversation_out, message_out
+from delve.runs import steps
+from delve.serialize import approval_out, conversation_out, message_out, step_out
 
 log = logging.getLogger("delve.runs")
 
@@ -128,8 +129,10 @@ class RunManager:
         hub: EventHub,
         *,
         timing: Timing | None = None,
+        approval_timeout_s: int = 300,
     ) -> None:
         self._sm = sessionmaker
+        self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
         self._hermes = hermes
         self._hub = hub
         self._t = timing or Timing()
@@ -631,16 +634,55 @@ class RunManager:
             await asyncio.sleep(min(0.5 * 2 ** (attempt - 1), self._t.max_backoff_s))
 
     async def _on_event(self, ctx: _Ctx, ev: HermesEvent) -> None:
-        async with self._sm() as s:
-            await s.execute(
-                pg_insert(RunEvent)
-                .values(run_id=ctx.run_id, seq=ev.seq, event=ev.event, payload=ev.data)
-                .on_conflict_do_nothing()
-            )
-            await s.commit()
-        ctx.last_seq = ev.seq
+        """Store the event and its effects in one transaction, then publish."""
         name, data = ev.event, ev.data
         base = {"run_id": ctx.run_id, "conversation_id": ctx.conversation_id}
+        out: list[tuple[str, dict[str, Any]]] = []
+        new_status: str | None = None
+        async with self._sm() as s:
+            inserted = await s.scalar(
+                pg_insert(RunEvent)
+                .values(run_id=ctx.run_id, seq=ev.seq, event=name, payload=data)
+                .on_conflict_do_nothing()
+                .returning(RunEvent.seq)
+            )
+            if inserted is None:  # already processed before a restart
+                ctx.last_seq = ev.seq
+                return
+            if name == "tool.started":
+                step = await steps.record_tool_started(s, ctx.run_id, ev.seq, data)
+                out.append(("tool.started", {**base, "step": step_out(step)}))
+            elif name == "tool.completed":
+                step, expired = await steps.record_tool_completed(s, ctx.run_id, ev.seq, data)
+                out.append(("tool.completed", {**base, "step": step_out(step, expired)}))
+                if expired is not None:  # Hermes timed the approval out (plan 3.7)
+                    out.append(("approval.updated", approval_out(expired)))
+                if ctx.status == "waiting_for_approval":
+                    new_status = "running"
+            elif name == "approval.request":
+                recorded = await steps.record_approval_request(
+                    s,
+                    run_id=ctx.run_id,
+                    conversation_id=ctx.conversation_id,
+                    data=data,
+                    received_at=now(),
+                    hermes_timeout=timedelta(seconds=self._approval_timeout_s),
+                )
+                if recorded is not None:
+                    req, req_step = recorded
+                    payload = approval_out(req, steps.offered_choices(data.get("choices")))
+                    payload["step_id"] = req_step.id if req_step is not None else None
+                    out.append(("approval.request", payload))
+                new_status = "waiting_for_approval"
+            elif name == "approval.responded":
+                answered = await steps.record_approval_responded(s, data)
+                if answered is not None:
+                    out.append(("approval.updated", approval_out(answered)))
+                if ctx.status == "waiting_for_approval":
+                    new_status = "running"
+            await s.commit()
+        ctx.last_seq = ev.seq
+
         if name == "message.delta":
             delta = data.get("delta")
             if isinstance(delta, str) and delta:
@@ -656,26 +698,13 @@ class RunManager:
             text = data.get("text")
             if isinstance(text, str) and text.strip():
                 ctx.interim.append(text)
-                self._hub.publish(
-                    "message.interim", {**base, "message_id": ctx.message_id, "text": text}
+                out.append(
+                    ("message.interim", {**base, "message_id": ctx.message_id, "text": text})
                 )
-        elif name == "tool.started":
-            self._hub.publish(
-                "tool.started",
-                {**base, "seq": ev.seq, "tool": data.get("tool"), "preview": data.get("preview")},
-            )
-        elif name == "tool.completed":
-            self._hub.publish(
-                "tool.completed",
-                {**base, "seq": ev.seq, "tool": data.get("tool"),
-                 "duration": data.get("duration"), "error": bool(data.get("error"))},
-            )  # fmt: skip
-            if ctx.status == "waiting_for_approval":  # Hermes-side approval timeout
-                await self._set_status(ctx, "running")
-        elif name == "approval.request":
-            await self._set_status(ctx, "waiting_for_approval")
-        elif name == "approval.responded" and ctx.status == "waiting_for_approval":
-            await self._set_status(ctx, "running")
+        for type_, payload in out:
+            self._hub.publish(type_, payload)
+        if new_status is not None:
+            await self._set_status(ctx, new_status)
 
     async def _flush(self, ctx: _Ctx, *, force: bool = False) -> None:
         if not ctx.dirty:
@@ -729,6 +758,7 @@ class RunManager:
             run.usage, run.perf = usage, perf
             msg = _must(await s.get(Message, ctx.message_id))
             msg.content, msg.interim, msg.status = content, interim, MESSAGE_STATUS_FOR[status]
+            open_steps, open_approvals = await steps.settle_open(s, ctx.run_id, status, now())
             await s.execute(
                 update(Conversation)
                 .where(Conversation.id == ctx.conversation_id)
@@ -737,6 +767,11 @@ class RunManager:
             await s.commit()
             msg_out = message_out(msg)
         ctx.status = status
+        base = {"run_id": ctx.run_id, "conversation_id": ctx.conversation_id}
+        for step in open_steps:
+            self._hub.publish("tool.completed", {**base, "step": step_out(step)})
+        for approval in open_approvals:
+            self._hub.publish("approval.updated", approval_out(approval))
         self._hub.publish(
             "message.updated", {"conversation_id": ctx.conversation_id, "message": msg_out}
         )

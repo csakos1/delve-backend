@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .harness import Harness, make_harness
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -81,3 +83,10 @@ async def db(migrated_url: str) -> AsyncIterator[async_sessionmaker[AsyncSession
         yield make_sessionmaker(engine)
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+async def h(db: async_sessionmaker[AsyncSession]) -> AsyncIterator[Harness]:
+    """RunManager + EventHub + fake Hermes (streaming transport) on an empty database."""
+    async with make_harness(db) as harness:
+        yield harness

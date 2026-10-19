@@ -23,11 +23,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve import __version__
+from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
 from delve.db.models import Conversation, Message
 from delve.events import EventHub, Subscription
+from delve.runs.approvals import ApprovalError, ApprovalService
 from delve.runs.manager import InvalidRequest, NotFound, RunManager
-from delve.serialize import conversation_out, message_out
+from delve.serialize import conversation_out
 
 log = logging.getLogger("delve.ws")
 router = APIRouter()
@@ -73,7 +75,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     sub = hub.subscribe()
     try:
         watermark = await _handshake(ws, hub, data, app.state)
-        await _session(ws, sub, watermark, device, app.state.run_manager, sm)
+        await _session(ws, sub, watermark, device, app.state.run_manager, sm, app.state.approvals)
     except WebSocketDisconnect:
         pass
     finally:
@@ -120,6 +122,7 @@ async def _session(
     device: DeviceIdentity,
     mgr: RunManager,
     sm: async_sessionmaker[AsyncSession],
+    approvals: ApprovalService,
 ) -> None:
     async def pump() -> None:
         while True:
@@ -149,7 +152,7 @@ async def _session(
             except ProtocolError as exc:
                 await _send(ws, _error(None, exc.code, exc.message))
                 continue
-            await _handle(ws, frame, device, mgr, sm)
+            await _handle(ws, frame, device, mgr, sm, approvals)
             if any(t.done() for t in tasks):
                 break
     finally:
@@ -166,6 +169,7 @@ async def _handle(
     device: DeviceIdentity,
     mgr: RunManager,
     sm: async_sessionmaker[AsyncSession],
+    approvals: ApprovalService,
 ) -> None:
     ftype, fid, data = frame.get("type"), frame.get("id"), frame.get("data") or {}
     if not isinstance(data, dict):
@@ -188,7 +192,14 @@ async def _handle(
         elif ftype == "sync":
             await _send(ws, _ack(fid, await _sync(data, sm)))
         elif ftype == "approval.respond":
-            await _send(ws, _error(fid, "not_implemented", "approvals arrive in a later step"))
+            request_id = _required_str(data, "request_id")
+            choice = _required_str(data, "choice")
+            try:
+                out = await approvals.respond(request_id, choice, device.name)
+            except ApprovalError as exc:
+                await _send(ws, _error(fid, exc.code, exc.message))
+                return
+            await _send(ws, _ack(fid, {"approval": out}))
         else:
             await _send(ws, _error(fid, "unknown_type", f"unknown frame type {ftype!r}"))
     except ProtocolError as exc:
@@ -244,9 +255,10 @@ async def _sync(data: dict[str, Any], sm: async_sessionmaker[AsyncSession]) -> d
         if after is not None:
             q = q.where(Message.id > after)
         rows = list((await s.execute(q.order_by(Message.id).limit(SYNC_LIMIT + 1))).scalars())
+        messages = await messages_with_steps(s, rows[:SYNC_LIMIT])
     return {
         "conversation": conversation_out(conv),
-        "messages": [message_out(m) for m in rows[:SYNC_LIMIT]],
+        "messages": messages,
         "has_more": len(rows) > SYNC_LIMIT,
     }
 

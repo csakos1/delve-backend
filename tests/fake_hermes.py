@@ -7,6 +7,7 @@ in `FakeHermes.requests` for assertions on paths, headers and bodies.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from collections.abc import AsyncIterator
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -69,6 +71,7 @@ class Scenario:
     release: asyncio.Event = field(default_factory=asyncio.Event)
     connections: int = 0
     stopped: bool = False
+    text: str | None = None  # SSE body to serve instead of the `events` fixture
 
 
 @dataclass
@@ -181,7 +184,7 @@ class FakeHermes:
             sc = fake.runs.get(run_id)
             if sc is None:
                 return _err(404, "run_not_found", f"Run not found: {run_id}")
-            text = load_text(sc.events)
+            text = sc.text if sc.text is not None else load_text(sc.events)
             sc.connections += 1
             if sc.cut_after_seq is not None and not (sc.cut_once and sc.connections > 1):
                 text = sse_cut(text, sc.cut_after_seq)
@@ -223,6 +226,7 @@ class FakeHermes:
                 return _err(400, "invalid_approval_request", "Approval request_id is invalid.")
             if "error" in result:
                 return JSONResponse(result, status_code=400)
+            sc.release.set()  # an answered approval lets a paused stream go on
             return JSONResponse(result)
 
         @app.post("/v1/runs/{run_id}/stop")
@@ -255,3 +259,91 @@ def _err(status: int, code: str, message: str) -> JSONResponse:
                    "code": code}},
         status_code=status,
     )  # fmt: skip
+
+
+class StreamingASGITransport(httpx.AsyncBaseTransport):
+    """Like httpx.ASGITransport, but the response body streams as the app sends it.
+
+    httpx's own ASGI transport buffers the whole body, so a fake stream paused mid-way
+    (waiting for an approval answer or a stop) would never deliver its first events.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        body = await request.aread()
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": request.method,
+            "scheme": request.url.scheme,
+            "path": request.url.path,
+            "raw_path": request.url.raw_path.split(b"?")[0],
+            "query_string": request.url.query,
+            "root_path": "",
+            "headers": [(k.lower(), v) for k, v in request.headers.raw],
+            "server": ("hermes", 80),
+            "client": ("127.0.0.1", 40000),
+        }
+        sent_body = False
+        disconnected = asyncio.Event()
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def receive() -> dict[str, Any]:
+            nonlocal sent_body
+            if not sent_body:
+                sent_body = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            await queue.put(message)
+
+        async def run() -> None:
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+        start = await queue.get()
+        if start is None or start["type"] != "http.response.start":
+            await task
+            raise httpx.TransportError("fake app sent no response")
+        return httpx.Response(
+            status_code=start["status"],
+            headers=start.get("headers", []),
+            stream=_StreamingBody(queue, task, disconnected),
+            request=request,
+        )
+
+
+class _StreamingBody(httpx.AsyncByteStream):
+    def __init__(
+        self,
+        queue: asyncio.Queue[dict[str, Any] | None],
+        task: asyncio.Task[None],
+        disconnected: asyncio.Event,
+    ) -> None:
+        self._queue, self._task, self._disconnected = queue, task, disconnected
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while True:
+            msg = await self._queue.get()
+            if msg is None:
+                return
+            if msg["type"] == "http.response.body":
+                if msg.get("body"):
+                    yield msg["body"]
+                if not msg.get("more_body"):
+                    return
+
+    async def aclose(self) -> None:
+        self._disconnected.set()
+        if not self._task.done():
+            self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task

@@ -51,6 +51,20 @@ RUN_STATUSES = (
 ACTIVE_RUN_STATUSES = ("starting", "running", "waiting_for_approval", "stopping", "reconnecting")
 TERMINAL_RUN_STATUSES = ("completed", "cancelled", "failed")
 MESSAGE_STATUSES = ("streaming", "final", "cancelled", "failed")
+# plan 6.5; late_approved .. superseded belong to late approval (plan 12/5)
+APPROVAL_STATUSES = (
+    "pending",
+    "approved_once",
+    "approved_session",
+    "denied",
+    "expired_in_hermes",
+    "late_approved",
+    "followup_started",
+    "executed",
+    "superseded",
+    "expired",
+    "cancelled",
+)
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -193,6 +207,8 @@ class ToolStep(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     user_summary: Mapped[str | None] = mapped_column(Text)
     duration_s: Mapped[float | None] = mapped_column(REAL)
+    # the approval Hermes asked for while this step was running
+    approval_request_id: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(
@@ -231,6 +247,7 @@ class Approval(Base):
             name="action_class",
         ),
         CheckConstraint("choice IS NULL OR choice IN ('once','session','deny')", name="choice"),
+        CheckConstraint(_in("status", APPROVAL_STATUSES), name="status"),
         Index(None, "status", "expires_at"),
     )
 

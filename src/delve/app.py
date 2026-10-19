@@ -19,6 +19,7 @@ from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, HermesError, HermesUnavailable, ThinkingRoute
+from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
 
 log = logging.getLogger("delve.app")
@@ -45,9 +46,16 @@ def create_app(
             transport=hermes_transport,
         )
         hub = EventHub()
-        manager = RunManager(sessionmaker, hermes, hub, timing=timing)
+        manager = RunManager(
+            sessionmaker,
+            hermes,
+            hub,
+            timing=timing,
+            approval_timeout_s=settings.hermes_approval_timeout_s,
+        )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
+        app.state.approvals = ApprovalService(sessionmaker, hermes, hub)
         app.state.hermes_version = None
         probe = asyncio.create_task(_probe_hermes(app, hermes))
         if run_worker:

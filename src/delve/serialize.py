@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from delve.db.models import Conversation, Message, Run
+from delve.db.models import Approval, Conversation, Message, Run, ToolStep
+from delve.runs.steps import offered_choices
 
 
 def iso(ts: datetime | None) -> str | None:
@@ -56,4 +57,42 @@ def run_out(r: Run) -> dict[str, Any]:
         "ended_at": iso(r.ended_at),
         "usage": r.usage,
         "error": r.error,
+    }
+
+
+def approval_out(a: Approval, choices: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "request_id": a.request_id,
+        "run_id": a.run_id,
+        "conversation_id": a.conversation_id,
+        "command": a.command,
+        "description": a.description,
+        "pattern_keys": a.pattern_keys or [],
+        "action_class": a.action_class,
+        "status": a.status,
+        "choice": a.choice,
+        "choices": choices if choices is not None else offered_choices(None),
+        "decided_by": a.decided_by,
+        "created_at": iso(a.created_at),
+        "hermes_deadline": iso(a.hermes_deadline),
+        "expires_at": iso(a.expires_at),
+        "responded_at": iso(a.responded_at),
+    }
+
+
+def step_out(t: ToolStep, approval: Approval | None = None) -> dict[str, Any]:
+    return {
+        "id": t.id,
+        "run_id": t.run_id,
+        "tool": t.tool,
+        "status": t.status,
+        "preview": t.preview_start,
+        "result": t.result,
+        "result_raw": t.result_raw,
+        "user_summary": t.user_summary,
+        "duration_s": t.duration_s,
+        "seq_started": t.seq_started,
+        "seq_completed": t.seq_completed,
+        "approval_request_id": t.approval_request_id,
+        "approval": approval_out(approval) if approval is not None else None,
     }

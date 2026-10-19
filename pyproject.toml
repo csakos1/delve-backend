@@ -42,7 +42,11 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
   "pg: needs a PostgreSQL database (DELVE_TEST_DATABASE_URL); skipped otherwise",
 ]
-filterwarnings = ["error::DeprecationWarning:delve.*"]
+filterwarnings = [
+  "error::DeprecationWarning:delve.*",
+  # starlette 1.x's TestClient nudges towards httpx2 (a UserWarning subclass)
+  "ignore:Using `httpx` with `starlette.testclient`:UserWarning",
+]
 
 [tool.ruff]
 line-length = 100

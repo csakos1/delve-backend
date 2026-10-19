@@ -6,7 +6,6 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,8 +16,8 @@ from delve.app import create_app
 from delve.auth import create_device
 from delve.config import Settings
 
-from .fake_hermes import FakeHermes, load_json
-from .test_run_manager import FAST, final_output
+from .fake_hermes import FakeHermes, StreamingASGITransport, load_json
+from .harness import FAST, final_output
 
 pytestmark = pytest.mark.pg
 
@@ -47,7 +46,7 @@ def client(
     env.setenv("HERMES_API_KEY", "fake-key")
     app = create_app(
         Settings(),  # type: ignore[call-arg]
-        hermes_transport=httpx.ASGITransport(app=fake.app),
+        hermes_transport=StreamingASGITransport(fake.app),
         timing=FAST,
     )
     with TestClient(app) as c:
@@ -255,3 +254,66 @@ def test_ws_commands_and_errors(client: TestClient, token: str, fake: FakeHermes
 
     body = fake.calls("POST", "/v1/runs")[0].body
     assert body["provider"] == "custom:llama-qwen38-think"  # thinking=True on a new chat
+
+
+def test_approval_over_ws_and_rest(client: TestClient, token: str, fake: FakeHermes) -> None:
+    created = load_json("protocol/c.create.json")
+    run_id = created["run_id"]
+    rid = "9a498aa517494a869dbf623f95b62d44"
+    fake.enqueue(
+        "protocol/c",
+        pause_before_seq=2,
+        approvals={rid: load_json(f"protocol/approval-once-{run_id}.json")},
+    )
+    with client.websocket_connect("/api/v1/ws") as ws:
+        hello(ws, token)
+        cmid = str(uuid.uuid4())
+        ws.send_json(
+            {
+                "type": "chat.send",
+                "id": "1",
+                "data": {"text": "rm -r /tmp/x", "client_msg_id": cmid},
+            }
+        )
+        frames = until(ws, lambda f: f["type"] == "approval.request")
+        req = frames[-1]["data"]
+        assert req["request_id"] == rid and req["choices"] == ["once", "session", "deny"]
+        assert req["action_class"] == "delete_kill" and req["command"] == "rm -r /tmp/x"
+
+        # REST inbox sees it while it is pending
+        inbox = client.get("/api/v1/approvals", headers=auth(token)).json()["data"]
+        assert [a["request_id"] for a in inbox] == [rid]
+
+        ws.send_json({"type": "approval.respond", "id": "a",
+                      "data": {"request_id": rid, "choice": "always"}})  # fmt: skip
+        err = until(ws, lambda f: f.get("id") == "a")[-1]
+        assert err["type"] == "error" and err["data"]["code"] == "invalid_choice"
+
+        ws.send_json({"type": "approval.respond", "id": "b",
+                      "data": {"request_id": rid, "choice": "once"}})  # fmt: skip
+        ack = until(ws, lambda f: f.get("id") == "b")[-1]
+        assert ack["type"] == "ack" and ack["data"]["approval"]["status"] == "approved_once"
+        assert ack["data"]["approval"]["decided_by"] == "pixel"
+        rest = until(ws, lambda f: f["type"] == "run.finished")
+        done = next(f for f in rest if f["type"] == "tool.completed")["data"]["step"]
+        assert done["status"] == "ok"
+
+    conv_id = req["conversation_id"]
+    msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=auth(token)).json()
+    user, assistant = msgs["data"]
+    assert "tool_steps" not in user
+    (step,) = assistant["tool_steps"]
+    assert step["approval"]["status"] == "approved_once" and step["approval"]["choice"] == "once"
+    assert step["preview"] == "rm -r /tmp/x"
+
+    assert client.get("/api/v1/approvals", headers=auth(token)).json()["data"] == []
+    decided = client.get("/api/v1/approvals?status=approved_once", headers=auth(token)).json()
+    assert [a["request_id"] for a in decided["data"]] == [rid]
+    r = client.post(f"/api/v1/approvals/{rid}", json={"choice": "deny"}, headers=auth(token))
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "approval_already_decided"
+    r = client.post(f"/api/v1/approvals/{rid}", json={"choice": "always"}, headers=auth(token))
+    assert r.status_code == 400
+    r = client.post("/api/v1/approvals/nope", json={"choice": "once"}, headers=auth(token))
+    assert r.status_code == 404
+    assert client.post(f"/api/v1/approvals/{rid}", json={"choice": "once"}).status_code == 401
+    assert len(fake.calls("POST", f"/v1/runs/{run_id}/approval")) == 1
