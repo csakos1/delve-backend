@@ -3,64 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
-from delve.app import create_app
-from delve.auth import create_device
-from delve.config import Settings
-
-from .fake_hermes import FakeHermes, StreamingASGITransport, load_json
-from .fake_llama import FakeLlama
-from .harness import FAST, final_output
+from .fake_hermes import FakeHermes, load_json
+from .harness import final_output
 
 pytestmark = pytest.mark.pg
-
-
-@pytest.fixture
-async def token(db: async_sessionmaker[AsyncSession]) -> str:
-    async with db() as s:
-        _, tok = await create_device(s, "pixel")
-        await s.commit()
-    return tok
-
-
-@pytest.fixture
-def fake() -> FakeHermes:
-    return FakeHermes()
-
-
-@pytest.fixture
-def llama() -> FakeLlama:
-    fl = FakeLlama()
-    fl.set(task=100, processing=False, tokens=300)
-    return fl
-
-
-@pytest.fixture
-def client(
-    env: pytest.MonkeyPatch,
-    migrated_url: str,
-    fake: FakeHermes,
-    llama: FakeLlama,
-    db: async_sessionmaker[AsyncSession],
-) -> Iterator[TestClient]:
-    env.setenv("DELVE_DATABASE_URL", migrated_url)
-    env.setenv("HERMES_API_KEY", "fake-key")
-    app = create_app(
-        Settings(),  # type: ignore[call-arg]
-        hermes_transport=StreamingASGITransport(fake.app),
-        llama_transport=StreamingASGITransport(llama.app),
-        timing=FAST,
-    )
-    with TestClient(app) as c:
-        yield c
 
 
 def auth(tok: str) -> dict[str, str]:

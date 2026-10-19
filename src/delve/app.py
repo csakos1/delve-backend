@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from delve import __version__
-from delve.api import rest, ws
+from delve.api import devices, rest, ws
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
@@ -82,7 +82,9 @@ def create_app(
         openapi_url=None,
     )
     app.state.settings = settings
+    app.state.pairing_limiter = devices.FailureLimiter()
     app.include_router(rest.router)
+    app.include_router(devices.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

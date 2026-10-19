@@ -1,7 +1,10 @@
 """Device tokens (plan 6.8, N28).
 
 A token is shown once when it is created; only its SHA-256 is stored in `devices`.
-Pairing with a one-time code (plan 12/8) will create tokens through the same functions.
+
+Pairing (plan 12/8, decision 161): `delve-backend pair` prints an 8-digit one-time code
+(10 minutes); the app sends it to `POST /api/v1/devices/register` and receives a token.
+A new code replaces any unused one, and only the code's SHA-256 is stored.
 """
 
 from __future__ import annotations
@@ -16,8 +19,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from delve.db.models import Device
+from delve.db.models import Device, PairingCode
 
+PAIRING_DIGITS = 8
+PAIRING_TTL = timedelta(minutes=10)
+FCM_TOKEN_MAX = 4096
 TOKEN_PREFIX = "dlv_"  # noqa: S105  # a prefix, not a secret
 # last_seen_at is a hint, not an audit log: write it at most this often per device
 LAST_SEEN_RESOLUTION = timedelta(minutes=1)
@@ -69,6 +75,77 @@ async def authenticate(session: AsyncSession, token: str | None) -> DeviceIdenti
 
 async def revoke_device(session: AsyncSession, device_id: uuid.UUID) -> bool:
     result = await session.execute(
-        update(Device).where(Device.id == device_id, ~Device.revoked).values(revoked=True)
+        update(Device)
+        .where(Device.id == device_id, ~Device.revoked)
+        .values(revoked=True, fcm_token=None)  # a revoked phone gets no more pushes
     )
     return bool(getattr(result, "rowcount", 0))
+
+
+def normalize_code(code: str) -> str | None:
+    """Digits only ("1234-5678", "1234 5678" are fine); None if not 8 digits."""
+    digits = "".join(c for c in code if c.isdigit())
+    if len(digits) != PAIRING_DIGITS or len(code) > 32:
+        return None
+    return digits
+
+
+def format_code(code: str) -> str:
+    return f"{code[:4]}-{code[4:]}"
+
+
+async def create_pairing_code(
+    session: AsyncSession, *, name: str | None = None, ttl: timedelta = PAIRING_TTL
+) -> tuple[str, datetime]:
+    """A fresh code; unused earlier codes stop working. Returns (code, expires_at)."""
+    if name is not None:
+        name = name.strip()
+        if not name or len(name) > 64:
+            raise ValueError("device name must be 1-64 characters")
+    now = datetime.now(UTC)
+    await session.execute(
+        update(PairingCode)
+        .where(PairingCode.used_at.is_(None), PairingCode.expires_at > now)
+        .values(expires_at=now)
+    )
+    code = "".join(secrets.choice("0123456789") for _ in range(PAIRING_DIGITS))
+    expires = now + ttl
+    session.add(
+        PairingCode(id=uuid.uuid4(), code_sha256=token_hash(code), name=name, expires_at=expires)
+    )
+    await session.flush()
+    return code, expires
+
+
+async def redeem_pairing_code(
+    session: AsyncSession, code: str, name: str | None
+) -> tuple[Device, str] | None:
+    """Use a valid code once: create the device and return it with its token.
+
+    The caller commits. Unknown, used and expired codes all return None.
+    """
+    digits = normalize_code(code)
+    if digits is None:
+        return None
+    pc = (
+        await session.execute(
+            select(PairingCode)
+            .where(
+                PairingCode.code_sha256 == token_hash(digits),
+                PairingCode.used_at.is_(None),
+                PairingCode.expires_at > datetime.now(UTC),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if pc is None:
+        return None
+    device, token = await create_device(session, pc.name or (name or "").strip() or "phone")
+    pc.used_at, pc.device_id = datetime.now(UTC), device.id
+    return device, token
+
+
+async def set_fcm_token(session: AsyncSession, device_id: uuid.UUID, token: str | None) -> None:
+    if token is not None and (not token.strip() or len(token) > FCM_TOKEN_MAX):
+        raise ValueError(f"FCM token must be 1-{FCM_TOKEN_MAX} characters")
+    await session.execute(update(Device).where(Device.id == device_id).values(fcm_token=token))

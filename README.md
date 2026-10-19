@@ -28,6 +28,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 4 | Tool steps, durable approvals, approval answers over WebSocket and REST | done |
 | 5 | Approval expiry, late approval, reconciliation after a gateway restart | done |
 | 6 | Token totals, context fill, per-run throughput | done |
+| 7 | Pairing with a one-time code, FCM token, status for the app | done |
 
 ## Development
 
@@ -69,20 +70,29 @@ authentication over the unix socket, so there is no database password.
 
 ```sh
 alembic upgrade head
-delve-backend token create --name pixel     # prints a device token once
 delve-backend                               # or: delve-backend serve
+delve-backend pair                          # one-time code for the app, e.g. 4821-0937
 ```
 
-`delve-backend token list` and `delve-backend token revoke <device-id>` manage devices.
-Only the SHA-256 of a token is stored. The token commands need only `DELVE_DATABASE_URL`.
+`delve-backend pair [--name NAME] [--ttl MINUTES]` prints an 8-digit code, valid once for
+10 minutes by default; a new code replaces any unused one. The app sends it to
+`POST /api/v1/devices/register` and gets its device token. Without the app,
+`delve-backend token create --name pixel` prints a token directly. `delve-backend token
+list` and `delve-backend token revoke <device-id>` manage devices (revoking also drops the
+FCM token). Only SHA-256 hashes of codes and tokens are stored. These commands need only
+`DELVE_DATABASE_URL`.
 
 ## API
 
-Every endpoint except `/api/v1/health` and `/api/v1/meta` needs
-`Authorization: Bearer <device token>`.
+Every endpoint except `/api/v1/health`, `/api/v1/meta` and `/api/v1/devices/register`
+needs `Authorization: Bearer <device token>`.
 
 | Method | Path | |
 |---|---|---|
+| `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
+| `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm}` |
+| `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
+| `GET` | `/api/v1/status` | `{server_version, hermes, hermes_version, thinking_route}` |
 | `GET` | `/api/v1/conversations?limit=&cursor=&archived=` | newest first, keyset cursor |
 | `GET` | `/api/v1/conversations/{id}` | one conversation |
 | `GET` | `/api/v1/conversations/{id}/messages?before=&limit=` | oldest first |
@@ -96,9 +106,13 @@ Every endpoint except `/api/v1/health` and `/api/v1/meta` needs
 
 Frames are `{"type", "id"?, "data"}`. The first frame must be
 `hello {device_token, last_seq?, epoch?}`; the answer is
-`hello.ok {server_version, hermes_version, epoch, seq, resync_required}`, followed by any
+`hello.ok {server_version, hermes, hermes_version, thinking_route, epoch, seq,
+resync_required}`, followed by any
 events after `last_seq`. Server events carry a global `seq`; the ring buffer keeps 10 000
 events for up to an hour, and a new `epoch` after a restart means: reload over REST.
+
+`hermes` is `ok`, `down` or `null` (not polled yet); `thinking_route` is `{ok, run_id, at}`
+from the last thinking run (whether Hermes used the thinking provider), or `null`.
 
 | Client frame | Reply |
 |---|---|

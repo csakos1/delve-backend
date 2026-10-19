@@ -330,6 +330,22 @@ class Device(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
 
+class PairingCode(Base):
+    """One-time code for pairing a phone (plan 12/8, decision 161); only its hash is kept."""
+
+    __tablename__ = "pairing_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    code_sha256: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    name: Mapped[str | None] = mapped_column(Text)  # device name set by the CLI, if any
+    created_at: Mapped[datetime] = _now()
+    expires_at: Mapped[datetime] = mapped_column(TZ, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(TZ)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id")
+    )
+
+
 class PushLog(Base):
     __tablename__ = "push_log"
 

@@ -22,7 +22,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delve import __version__
 from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
 from delve.db.models import Conversation, Message
@@ -30,6 +29,7 @@ from delve.events import EventHub, Subscription
 from delve.runs.approvals import ApprovalError, ApprovalService
 from delve.runs.manager import InvalidRequest, NotFound, RunManager
 from delve.serialize import conversation_out
+from delve.status import snapshot
 
 log = logging.getLogger("delve.ws")
 router = APIRouter()
@@ -95,13 +95,13 @@ async def _handshake(ws: WebSocket, hub: EventHub, data: dict[str, Any], state: 
             resync = True
         else:
             replay = events
+    status = await snapshot(state.sessionmaker, state.run_manager)
     await _send(
         ws,
         {
             "type": "hello.ok",
             "data": {
-                "server_version": __version__,
-                "hermes_version": state.run_manager.hermes_version,
+                **status,
                 "epoch": hub.epoch,
                 "seq": hub.seq,
                 "resync_required": resync,

@@ -5,9 +5,16 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .harness import Harness, make_harness
+from delve.app import create_app
+from delve.auth import create_device
+from delve.config import Settings
+
+from .fake_hermes import FakeHermes, StreamingASGITransport
+from .fake_llama import FakeLlama
+from .harness import FAST, Harness, make_harness
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -90,3 +97,46 @@ async def h(db: async_sessionmaker[AsyncSession]) -> AsyncIterator[Harness]:
     """RunManager + EventHub + fake Hermes (streaming transport) on an empty database."""
     async with make_harness(db) as harness:
         yield harness
+
+
+# --- app-level fixtures (test_api, test_pairing) ------------------------------------
+
+
+@pytest.fixture
+async def token(db: async_sessionmaker[AsyncSession]) -> str:
+    async with db() as s:
+        _, tok = await create_device(s, "pixel")
+        await s.commit()
+    return tok
+
+
+@pytest.fixture
+def fake() -> FakeHermes:
+    return FakeHermes()
+
+
+@pytest.fixture
+def llama() -> FakeLlama:
+    fl = FakeLlama()
+    fl.set(task=100, processing=False, tokens=300)
+    return fl
+
+
+@pytest.fixture
+def client(
+    env: pytest.MonkeyPatch,
+    migrated_url: str,
+    fake: FakeHermes,
+    llama: FakeLlama,
+    db: async_sessionmaker[AsyncSession],
+) -> Iterator[TestClient]:
+    env.setenv("DELVE_DATABASE_URL", migrated_url)
+    env.setenv("HERMES_API_KEY", "fake-key")
+    app = create_app(
+        Settings(),  # type: ignore[call-arg]
+        hermes_transport=StreamingASGITransport(fake.app),
+        llama_transport=StreamingASGITransport(llama.app),
+        timing=FAST,
+    )
+    with TestClient(app) as c:
+        yield c

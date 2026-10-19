@@ -28,6 +28,7 @@ EXPECTED_TABLES = {
     "schedules",
     "system_state",
     "devices",
+    "pairing_codes",
     "push_log",
 }
 
