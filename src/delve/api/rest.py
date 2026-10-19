@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
-from delve.db.models import Conversation, Message, Run
+from delve.db.models import TERMINAL_RUN_STATUSES, Conversation, Message, Run
 from delve.runs.approvals import DEFAULT_LIST_STATUSES, ApprovalError, ApprovalService
 from delve.runs.manager import NotFound, RunManager
 from delve.serialize import conversation_out, run_out
@@ -174,6 +174,23 @@ async def patch_conversation(
         )
     except NotFound as exc:
         raise _not_found("conversation") from exc
+
+
+@router.get("/runs/open")
+async def open_runs(request: Request, _device: Device) -> dict[str, Any]:
+    """The global queue: the active run (if any) first, then queued runs in start order.
+
+    `position` is how many runs are ahead (0 = active, or next to start). After a resync
+    this is how the app learns which conversations have a run to stop or wait for; live
+    changes arrive as `run.*` events."""
+    q = (
+        select(Run)
+        .where(Run.status.not_in(TERMINAL_RUN_STATUSES))
+        .order_by((Run.status == "queued").asc(), Run.queued_at, Run.run_id)
+    )
+    async with _sessionmaker(request)() as s:
+        rows = list((await s.execute(q)).scalars())
+    return {"data": [{**run_out(r), "position": i} for i, r in enumerate(rows)]}
 
 
 def _approvals(request: Request) -> ApprovalService:

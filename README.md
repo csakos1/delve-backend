@@ -82,6 +82,9 @@ list` and `delve-backend token revoke <device-id>` manage devices (revoking also
 FCM token). Only SHA-256 hashes of codes and tokens are stored. These commands need only
 `DELVE_DATABASE_URL`.
 
+The installed service listens on `127.0.0.1:8700`; a development backend next to it
+needs another port, e.g. `DELVE_BIND=127.0.0.1:8701` in its environment.
+
 ## Deployment
 
 Production runs as the `delve` system user from `/opt/delve/current`, as a hardened system
@@ -107,7 +110,7 @@ needs `Authorization: Bearer <device token>`.
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
 | `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm}` |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
-| `GET` | `/api/v1/status` | `{server_version, hermes, hermes_version, thinking_route}` |
+| `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
 | `GET` | `/api/v1/conversations?limit=&cursor=&archived=` | newest first, keyset cursor |
 | `GET` | `/api/v1/conversations/{id}` | one conversation |
 | `GET` | `/api/v1/conversations/{id}/messages?before=&limit=` | oldest first |
@@ -115,14 +118,16 @@ needs `Authorization: Bearer <device token>`.
 | `PATCH` | `/api/v1/conversations/{id}` | `{thinking?, archived?}` |
 | `GET` | `/api/v1/approvals?status=pending,expired_in_hermes` | approval inbox |
 | `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
+| `GET` | `/api/v1/runs/open` | the queue: active run first, then queued ones; each with `position` (runs ahead) |
+| `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
 ### WebSocket
 
 Frames are `{"type", "id"?, "data"}`. The first frame must be
 `hello {device_token, last_seq?, epoch?}`; the answer is
-`hello.ok {server_version, hermes, hermes_version, thinking_route, epoch, seq,
-resync_required}`, followed by any
+`hello.ok {server_version, api_revision, revision, hermes, hermes_version, thinking_route,
+epoch, seq, resync_required}`, followed by any
 events after `last_seq`. Server events carry a global `seq`; the ring buffer keeps 10 000
 events for up to an hour, and a new `epoch` after a restart means: reload over REST.
 
@@ -150,6 +155,20 @@ A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it start
 text; when it completes, `content` becomes the run's final output and the agent's interim
 remarks ("I'll try …") move to `interim`. Assistant messages from REST and `sync` carry
 their run's `tool_steps`, each with its `approval` if Hermes asked for one.
+
+`api_revision` is the contract revision (below); `revision` is the git sha of the installed
+release (`null` when not run from `deploy/install.sh`). After a resync, `GET /api/v1/runs/open`
+tells which conversations have a run to stop or wait for.
+
+### Contract
+
+[`docs/contract.json`](docs/contract.json) lists every route with its query parameters, the
+keys of every object (`conversation`, `message`, `run`, `open_run`, `approval`, `tool_step`),
+every client frame and the exact key set of every server event. It is generated
+(`python -m delve.contract > docs/contract.json`) and a test fails when it is stale. Server
+events are also checked when they are published (`delve/protocol.py`): the test suite fails
+on any mismatch, production logs it. A change a client can see bumps `API_REVISION`
+(`delve/__init__.py`); the app requires a minimum revision.
 
 ### Tool steps and approvals
 

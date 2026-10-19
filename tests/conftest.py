@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from delve import protocol
 from delve.app import create_app
 from delve.auth import create_device
 from delve.config import Settings
@@ -15,6 +16,9 @@ from delve.config import Settings
 from .fake_hermes import FakeHermes, StreamingASGITransport
 from .fake_llama import FakeLlama
 from .harness import FAST, Harness, make_harness
+
+# every event the app publishes in a test must match delve.protocol exactly
+protocol.STRICT = True
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"

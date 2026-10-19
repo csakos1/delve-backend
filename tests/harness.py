@@ -99,7 +99,7 @@ async def make_harness(
     hermes = HermesClient(
         "http://hermes", API_KEY, ROUTE, transport=StreamingASGITransport(fake.app)
     )
-    hub = EventHub()
+    hub = EventHub(validate=True)
     sub = hub.subscribe()
     mgr = RunManager(db, hermes, hub, timing=timing, llama=llama)
     try:

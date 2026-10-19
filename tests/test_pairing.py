@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from delve import API_REVISION
 from delve.api.devices import FailureLimiter
 from delve.auth import (
     authenticate,
@@ -178,7 +179,11 @@ async def test_register_me_fcm_status(
     assert client.get("/api/v1/devices/me").status_code == 401
 
     st = client.get("/api/v1/status", headers=auth(tok)).json()
-    assert set(st) == {"server_version", "hermes", "hermes_version", "thinking_route"}
+    assert set(st) == {
+        "server_version", "api_revision", "revision", "hermes", "hermes_version",
+        "thinking_route",
+    }  # fmt: skip
+    assert st["api_revision"] == API_REVISION
     assert st["thinking_route"] is None
     assert client.get("/api/v1/status").status_code == 401
 

@@ -1,0 +1,394 @@
+{
+  "api_revision": 1,
+  "rest": [
+    {
+      "method": "GET",
+      "path": "/api/v1/approvals",
+      "query": [
+        "limit",
+        "status"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/approvals/{request_id}",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations",
+      "query": [
+        "archived",
+        "cursor",
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/{conversation_id}",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/conversations/{conversation_id}",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/{conversation_id}/messages",
+      "query": [
+        "before",
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/{conversation_id}/usage",
+      "query": [
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/devices/me",
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/devices/me/fcm",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/devices/register",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/health",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/meta",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runs/open",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/status",
+      "query": []
+    },
+    {
+      "method": "WS",
+      "path": "/api/v1/ws",
+      "query": []
+    }
+  ],
+  "shapes": {
+    "conversation": {
+      "archived": true,
+      "context": {
+        "max": true,
+        "measured_at": true,
+        "pct": true,
+        "tokens": true,
+        "warn": true
+      },
+      "created_at": true,
+      "id": true,
+      "last_run_id": true,
+      "origin": true,
+      "thinking": true,
+      "title": true,
+      "totals": {
+        "cache_read_tokens": true,
+        "input_tokens": true,
+        "output_tokens": true,
+        "total_tokens": true
+      },
+      "updated_at": true
+    },
+    "message": {
+      "client_msg_id": true,
+      "content": true,
+      "conversation_id": true,
+      "created_at": true,
+      "id": true,
+      "interim": true,
+      "reasoning": true,
+      "role": true,
+      "run_id": true,
+      "status": true
+    },
+    "run": {
+      "conversation_id": true,
+      "ended_at": true,
+      "error": true,
+      "origin": true,
+      "perf": true,
+      "queued_at": true,
+      "run_id": true,
+      "started_at": true,
+      "status": true,
+      "thinking": true,
+      "usage": true
+    },
+    "open_run": {
+      "conversation_id": true,
+      "ended_at": true,
+      "error": true,
+      "origin": true,
+      "perf": true,
+      "position": true,
+      "queued_at": true,
+      "run_id": true,
+      "started_at": true,
+      "status": true,
+      "thinking": true,
+      "usage": true
+    },
+    "approval": {
+      "action_class": true,
+      "choice": true,
+      "choices": true,
+      "command": true,
+      "conversation_id": true,
+      "created_at": true,
+      "decided_by": true,
+      "description": true,
+      "expires_at": true,
+      "hermes_deadline": true,
+      "pattern_keys": true,
+      "request_id": true,
+      "responded_at": true,
+      "run_id": true,
+      "status": true
+    },
+    "tool_step": {
+      "approval": "approval|null",
+      "approval_request_id": true,
+      "duration_s": true,
+      "id": true,
+      "preview": true,
+      "result": true,
+      "result_raw": true,
+      "run_id": true,
+      "seq_completed": true,
+      "seq_started": true,
+      "status": true,
+      "tool": true,
+      "user_summary": true
+    }
+  },
+  "ws": {
+    "client_frames": {
+      "approval.respond": {
+        "required": [
+          "choice",
+          "request_id"
+        ],
+        "optional": []
+      },
+      "chat.send": {
+        "required": [
+          "client_msg_id",
+          "text"
+        ],
+        "optional": [
+          "conversation_id",
+          "thinking"
+        ]
+      },
+      "conversation.set": {
+        "required": [
+          "conversation_id"
+        ],
+        "optional": [
+          "archived",
+          "thinking"
+        ]
+      },
+      "hello": {
+        "required": [
+          "device_token"
+        ],
+        "optional": [
+          "epoch",
+          "last_seq"
+        ]
+      },
+      "ping": {
+        "required": [],
+        "optional": []
+      },
+      "run.stop": {
+        "required": [
+          "run_id"
+        ],
+        "optional": []
+      },
+      "sync": {
+        "required": [
+          "conversation_id"
+        ],
+        "optional": [
+          "after_message_id"
+        ]
+      }
+    },
+    "server_events": {
+      "approval.request": [
+        "action_class",
+        "choice",
+        "choices",
+        "command",
+        "conversation_id",
+        "created_at",
+        "decided_by",
+        "description",
+        "expires_at",
+        "hermes_deadline",
+        "pattern_keys",
+        "request_id",
+        "responded_at",
+        "run_id",
+        "status",
+        "step_id"
+      ],
+      "approval.updated": [
+        "action_class",
+        "choice",
+        "choices",
+        "command",
+        "conversation_id",
+        "created_at",
+        "decided_by",
+        "description",
+        "expires_at",
+        "hermes_deadline",
+        "pattern_keys",
+        "request_id",
+        "responded_at",
+        "run_id",
+        "status"
+      ],
+      "context.updated": [
+        "conversation_id",
+        "final",
+        "max",
+        "measured_at",
+        "pct",
+        "run_id",
+        "source",
+        "tokens",
+        "warn"
+      ],
+      "conversation.created": [
+        "archived",
+        "context",
+        "created_at",
+        "id",
+        "last_run_id",
+        "origin",
+        "thinking",
+        "title",
+        "totals",
+        "updated_at"
+      ],
+      "conversation.updated": [
+        "archived",
+        "context",
+        "created_at",
+        "id",
+        "last_run_id",
+        "origin",
+        "thinking",
+        "title",
+        "totals",
+        "updated_at"
+      ],
+      "error": [
+        "code",
+        "message",
+        "ref_id"
+      ],
+      "health.status": [
+        "hermes",
+        "hermes_version"
+      ],
+      "message.created": [
+        "conversation_id",
+        "message"
+      ],
+      "message.delta": [
+        "conversation_id",
+        "delta",
+        "message_id",
+        "run_id"
+      ],
+      "message.interim": [
+        "conversation_id",
+        "message_id",
+        "run_id",
+        "text"
+      ],
+      "message.updated": [
+        "conversation_id",
+        "message"
+      ],
+      "reasoning.final": [
+        "conversation_id",
+        "message_id",
+        "run_id",
+        "text"
+      ],
+      "run.finished": [
+        "conversation_id",
+        "error",
+        "run_id",
+        "status",
+        "usage"
+      ],
+      "run.queued": [
+        "conversation_id",
+        "origin",
+        "position",
+        "run_id",
+        "thinking"
+      ],
+      "run.started": [
+        "conversation_id",
+        "queued_id",
+        "run_id",
+        "thinking"
+      ],
+      "run.updated": [
+        "conversation_id",
+        "run_id",
+        "status"
+      ],
+      "tool.completed": [
+        "conversation_id",
+        "run_id",
+        "step"
+      ],
+      "tool.started": [
+        "conversation_id",
+        "run_id",
+        "step"
+      ]
+    },
+    "connection_frames": [
+      "ack",
+      "error",
+      "hello.ok",
+      "keepalive",
+      "pong"
+    ]
+  }
+}

@@ -13,7 +13,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from delve import __version__
+from delve import API_REVISION, REVISION, __version__
 from delve.api import devices, rest, ws
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
@@ -48,7 +48,7 @@ def create_app(
             transport=hermes_transport,
         )
         llama = LlamaClient(settings.llama_base_url, transport=llama_transport)
-        hub = EventHub()
+        hub = EventHub(validate=True)
         manager = RunManager(
             sessionmaker,
             hermes,
@@ -106,6 +106,8 @@ def create_app(
     async def meta() -> dict[str, Any]:
         return {
             "server_version": __version__,
+            "api_revision": API_REVISION,
+            "revision": REVISION,
             "python": platform.python_version(),
             "hermes_expected_version": settings.hermes_expected_version,
             "approval_timeout_s": settings.hermes_approval_timeout_s,

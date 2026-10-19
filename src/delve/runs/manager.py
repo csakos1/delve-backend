@@ -268,6 +268,7 @@ class RunManager:
                 "conversation_id": conv.id,
                 "position": position,
                 "thinking": conv.thinking,
+                "origin": origin,
             },
         )
         self.idle.clear()
@@ -465,13 +466,20 @@ class RunManager:
         )
 
     async def _position(self, s: AsyncSession, run: Run) -> int:
-        """Runs ahead of this one: the active run plus earlier queued ones."""
+        """Runs ahead of this one: the active run plus earlier queued ones (the order of
+        `GET /api/v1/runs/open`)."""
         ahead = await s.scalar(
             select(func.count())
             .select_from(Run)
             .where(
                 (Run.status.in_(ACTIVE_RUN_STATUSES))
-                | ((Run.status == "queued") & (Run.queued_at < run.queued_at))
+                | (
+                    (Run.status == "queued")
+                    & (
+                        (Run.queued_at < run.queued_at)
+                        | ((Run.queued_at == run.queued_at) & (Run.run_id < run.run_id))
+                    )
+                )
             )
         )
         return int(ahead or 0)

@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delve import __version__
+from delve import API_REVISION, REVISION, __version__
 from delve.db.models import SystemState
 from delve.runs.manager import RunManager
 
@@ -25,6 +25,8 @@ async def snapshot(sm: async_sessionmaker[AsyncSession], mgr: RunManager) -> dic
     ok = mgr.hermes_ok
     return {
         "server_version": __version__,
+        "api_revision": API_REVISION,
+        "revision": REVISION,
         "hermes": None if ok is None else ("ok" if ok else "down"),
         "hermes_version": mgr.hermes_version,
         "thinking_route": await thinking_route(sm),

@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from delve import protocol
+
 log = logging.getLogger("delve.events")
 
 
@@ -45,7 +47,10 @@ class EventHub:
         max_age_s: float = 3600.0,
         queue_size: int = 1000,
         clock: Callable[[], float] = time.monotonic,
+        validate: bool = False,
     ) -> None:
+        """`validate` checks every event against `delve.protocol.SERVER_EVENTS`."""
+        self._validate = validate
         self.epoch = secrets.token_hex(8)
         self._seq = 0
         self._buf: deque[Envelope] = deque(maxlen=maxlen)
@@ -63,6 +68,10 @@ class EventHub:
         return len(self._subs)
 
     def publish(self, type: str, data: dict[str, Any]) -> Envelope:
+        if self._validate and (problem := protocol.check_event(type, data)) is not None:
+            if protocol.STRICT:
+                raise protocol.ProtocolViolation(problem)
+            log.error("protocol violation", extra={"problem": problem})
         self._seq += 1
         env = Envelope(self._seq, type, data, self._clock())
         self._buf.append(env)
