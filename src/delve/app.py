@@ -19,6 +19,7 @@ from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
+from delve.llama import LlamaClient
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
 
@@ -29,10 +30,11 @@ def create_app(
     settings: Settings | None = None,
     *,
     hermes_transport: httpx.AsyncBaseTransport | None = None,
+    llama_transport: httpx.AsyncBaseTransport | None = None,
     run_worker: bool = True,
     timing: Timing | None = None,
 ) -> FastAPI:
-    """`hermes_transport`, `run_worker` and `timing` exist for tests."""
+    """`hermes_transport`, `llama_transport`, `run_worker` and `timing` exist for tests."""
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -45,6 +47,7 @@ def create_app(
             ThinkingRoute(settings.hermes_think_provider, settings.hermes_think_model),
             transport=hermes_transport,
         )
+        llama = LlamaClient(settings.llama_base_url, transport=llama_transport)
         hub = EventHub()
         manager = RunManager(
             sessionmaker,
@@ -53,6 +56,7 @@ def create_app(
             timing=timing,
             approval_timeout_s=settings.hermes_approval_timeout_s,
             expected_version=settings.hermes_expected_version,
+            llama=llama,
         )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
@@ -65,6 +69,7 @@ def create_app(
         finally:
             await manager.close()
             await hermes.aclose()
+            await llama.aclose()
             await engine.dispose()
             log.info("shutdown")
 

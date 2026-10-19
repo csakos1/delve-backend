@@ -49,8 +49,16 @@ from delve.hermes.client import (
 )
 from delve.hermes.models import RunStatus, SessionMessage
 from delve.hermes.sse import HermesEvent, HermesProtocolError
+from delve.llama import LlamaClient
 from delve.runs import late, steps
-from delve.serialize import approval_out, conversation_out, message_out, step_out
+from delve.runs.context import ContextMeter, Measurement
+from delve.serialize import (
+    CONTEXT_WARN_PCT,
+    approval_out,
+    conversation_out,
+    message_out,
+    step_out,
+)
 
 log = logging.getLogger("delve.runs")
 
@@ -103,6 +111,7 @@ class Timing:
     title_delays_s: tuple[float, ...] = (1.5, 3.0, 6.0)  # Hermes titles ~1.2 s after a run
     idle_poll_s: float = 5.0
     maintenance_s: float = 15.0  # Hermes health poll + approval expiry sweep
+    context_poll_s: float = 1.0  # llama /slots sampling while a run is active
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +138,11 @@ class _Ctx:
     last_flush: float = 0.0
     reconnects: int = 0
     origin: str = "app"
+    meter: ContextMeter | None = None
+    tool_steps: int = 0  # tool.started events seen (a run without any made one llama call)
+    started_mono: float = field(default_factory=time.monotonic)
+    first_delta_s: float | None = None
+    measure_first_delta: bool = True  # not for a run resumed after a restart
 
 
 class RunManager:
@@ -141,8 +155,10 @@ class RunManager:
         timing: Timing | None = None,
         approval_timeout_s: int = 300,
         expected_version: str | None = None,
+        llama: LlamaClient | None = None,
     ) -> None:
         self._sm = sessionmaker
+        self._llama = llama
         self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
         self._expected_version = expected_version
         self.hermes_ok: bool | None = None  # None until the first health poll
@@ -557,6 +573,9 @@ class RunManager:
             conv_id, thinking, text, key = conv.id, run.thinking, run.input, run.idempotency_key
             instructions, origin = run.instructions, run.origin
         self.active_run_id = qid
+        meter = self._new_meter()
+        if meter is not None:
+            await meter.prepare()  # before submitting: tasks seen now are not this run's
 
         created = await self._create_with_retry(
             qid, conv_id, text=text, thinking=thinking, key=key, instructions=instructions
@@ -600,6 +619,7 @@ class RunManager:
             "running",
             last_flush=time.monotonic(),
             origin=origin,
+            meter=meter,
         )
         if qid in self._stop_requested:
             self._stop_requested.discard(qid)
@@ -707,7 +727,10 @@ class RunManager:
                 ctx.text.append(ev.payload["delta"])
             elif ev.event == "message.interim" and isinstance(ev.payload.get("text"), str):
                 ctx.interim.append(ev.payload["text"])
+            elif ev.event == "tool.started":
+                ctx.tool_steps += 1
         ctx.last_flush = time.monotonic()
+        ctx.measure_first_delta = False
         self.active_run_id = run_id
         return ctx
 
@@ -715,10 +738,32 @@ class RunManager:
 
     async def _consume(self, ctx: _Ctx) -> None:
         self._ctx = ctx
+        if ctx.meter is None and (meter := self._new_meter()) is not None:
+            await meter.prepare(exclude_current=False)  # resumed run: its call may be live
+            ctx.meter = meter
+        if ctx.meter is not None:
+            ctx.meter.on_sample = lambda m: self._publish_context(ctx, m, final=False)
+            ctx.meter.start()
         try:
             await self._consume_inner(ctx)
         finally:
             self._ctx = None
+            if ctx.meter is not None:
+                await ctx.meter.stop()
+
+    def _new_meter(self) -> ContextMeter | None:
+        if self._llama is None:
+            return None
+        return ContextMeter(self._llama, interval_s=self._t.context_poll_s)
+
+    def _publish_context(self, ctx: _Ctx, m: Measurement, *, final: bool) -> None:
+        self._hub.publish(
+            "context.updated",
+            {"conversation_id": ctx.conversation_id, "run_id": ctx.run_id,
+             "tokens": m.tokens, "max": m.max, "pct": m.pct,
+             "warn": m.pct >= CONTEXT_WARN_PCT, "source": m.source,
+             "measured_at": now().isoformat(), "final": final},
+        )  # fmt: skip
 
     async def _consume_inner(self, ctx: _Ctx) -> None:
         failures = 0
@@ -805,6 +850,7 @@ class RunManager:
                 ctx.last_seq = ev.seq
                 return
             if name == "tool.started":
+                ctx.tool_steps += 1
                 step = await steps.record_tool_started(s, ctx.run_id, ev.seq, data)
                 out.append(("tool.started", {**base, "step": step_out(step)}))
             elif name == "tool.completed":
@@ -847,6 +893,8 @@ class RunManager:
         if name == "message.delta":
             delta = data.get("delta")
             if isinstance(delta, str) and delta:
+                if ctx.first_delta_s is None and ctx.measure_first_delta:
+                    ctx.first_delta_s = round(time.monotonic() - ctx.started_mono, 3)
                 ctx.text.append(delta)
                 ctx.dirty = True
                 self._hub.publish(
@@ -928,7 +976,14 @@ class RunManager:
         streamed = "".join(ctx.text)
         content = output if status == "completed" and output is not None else streamed
         interim = "\n\n".join(ctx.interim) if ctx.interim else None
+        measured: Measurement | None = None
         perf: dict[str, Any] = {"sse_reconnects": ctx.reconnects}
+        if ctx.first_delta_s is not None:
+            perf["first_delta_s"] = ctx.first_delta_s
+        if ctx.meter is not None:
+            # read the slot before anything else: Hermes' title call follows within ~0.2 s
+            measured, llama_perf = await ctx.meter.finish(usage=usage, tool_steps=ctx.tool_steps)
+            perf.update(llama_perf)
         route_ok: bool | None = None
         if status == "completed" and ctx.thinking:
             route_ok = route_applied(runtime, self._hermes.route)
@@ -942,13 +997,16 @@ class RunManager:
             open_steps, open_approvals = await steps.settle_open(s, ctx.run_id, status, now())
             if ctx.origin == "late_approval":
                 open_approvals += await late.settle_followup(s, ctx.run_id, status)
-            await s.execute(
-                update(Conversation)
-                .where(Conversation.id == ctx.conversation_id)
-                .values(updated_at=now())
-            )
+            conv = _must(await s.get(Conversation, ctx.conversation_id))
+            conv.updated_at = now()
+            conv.tokens_in += _int(usage, "input_tokens")
+            conv.tokens_out += _int(usage, "output_tokens")
+            conv.tokens_cache_read += _int(usage, "cache_read_tokens")
+            if measured is not None:
+                conv.context_tokens, conv.context_max = measured.tokens, measured.max
+                conv.context_measured_at = now()
             await s.commit()
-            msg_out = message_out(msg)
+            msg_out, conv_out = message_out(msg), conversation_out(conv)
         ctx.status = status
         base = {"run_id": ctx.run_id, "conversation_id": ctx.conversation_id}
         for step in open_steps:
@@ -963,6 +1021,9 @@ class RunManager:
             {"run_id": ctx.run_id, "conversation_id": ctx.conversation_id, "status": status,
              "usage": usage, "error": error},
         )  # fmt: skip
+        if measured is not None:
+            self._publish_context(ctx, measured, final=True)
+        self._hub.publish("conversation.updated", conv_out)
         log.info(
             "run finished",
             extra={"run_id": ctx.run_id, "status": status, "error": error,
@@ -1107,6 +1168,11 @@ def _live_status(hermes_status: str, previous: str) -> str:
     if hermes_status == "waiting_for_approval":
         return "waiting_for_approval"
     return "running"
+
+
+def _int(d: dict[str, Any] | None, key: str) -> int:
+    v = (d or {}).get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
 
 
 def _str(v: Any) -> str | None:

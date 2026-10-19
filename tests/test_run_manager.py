@@ -39,7 +39,9 @@ async def test_simple_run(h: Harness) -> None:
     run = await h.run(run_id)
     assert run.status == "completed" and run.error is None
     assert run.usage and run.usage["output_tokens"] == 58
-    assert run.perf == {"sse_reconnects": 0}
+    assert run.perf is not None and run.perf["sse_reconnects"] == 0
+    assert run.perf["first_delta_s"] >= 0  # no llama client: no context fields
+    assert set(run.perf) == {"sse_reconnects", "first_delta_s"}
     user, assistant = await h.messages(conv_id)
     assert user.role == "user" and user.run_id == run_id and user.content == "load?"
     assert assistant.role == "assistant" and assistant.status == "final"
@@ -68,7 +70,10 @@ async def test_simple_run(h: Harness) -> None:
         "tool.completed",
         "message.updated",
         "run.finished",
+        "conversation.updated",  # totals (and, with a llama client, the context)
     ]
+    totals = evs[-1].data["totals"]
+    assert totals["input_tokens"] == 16290 and totals["total_tokens"] == 16348
     started = next(e for e in evs if e.type == "run.started")
     assert started.data["queued_id"] == qid and started.data["run_id"] == run_id
     streamed = "".join(e.data["delta"] for e in evs if e.type == "message.delta")
@@ -171,7 +176,7 @@ async def test_reconnect_resumes_without_duplicates(h: Harness, honour: bool) ->
     await h.mgr.start()
     await h.settle()
     run = await h.run(run_id)
-    assert run.status == "completed" and run.perf == {"sse_reconnects": 1}
+    assert run.status == "completed" and run.perf and run.perf["sse_reconnects"] == 1
     gets = h.fake.calls("GET", f"/v1/runs/{run_id}/events")
     assert len(gets) == 2 and gets[1].headers["last-event-id"] == "10"
     evs = h.events()
@@ -226,7 +231,8 @@ async def test_thinking_run(h: Harness) -> None:
     assert body["provider"] == ROUTE.provider and body["model"] == ROUTE.model
     run_id = load_json("protocol/think.create.json")["run_id"]
     run = await h.run(run_id)
-    assert run.thinking and run.perf == {"sse_reconnects": 0, "route_applied": True}
+    assert run.thinking and run.perf
+    assert (run.perf["sse_reconnects"], run.perf["route_applied"]) == (0, True)
     _, assistant = await h.messages(conv_id)
     reasoning = load_json("protocol/think.messages.json")["data"][1]["reasoning"]
     assert assistant.content == "391"

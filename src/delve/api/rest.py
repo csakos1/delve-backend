@@ -18,10 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
-from delve.db.models import Conversation, Message
+from delve.db.models import Conversation, Message, Run
 from delve.runs.approvals import DEFAULT_LIST_STATUSES, ApprovalError, ApprovalService
 from delve.runs.manager import NotFound, RunManager
-from delve.serialize import conversation_out
+from delve.serialize import conversation_out, run_out
 
 
 def _sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -103,6 +103,35 @@ async def get_conversation(request: Request, _device: Device, conversation_id: s
     if conv is None:
         raise _not_found("conversation")
     return conversation_out(conv)
+
+
+@router.get("/conversations/{conversation_id}/usage")
+async def conversation_usage(
+    request: Request,
+    _device: Device,
+    conversation_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> dict[str, Any]:
+    """Totals, context fill and the newest `limit` runs (oldest first) with usage and perf."""
+    async with _sessionmaker(request)() as s:
+        conv = await s.get(Conversation, conversation_id)
+        if conv is None:
+            raise _not_found("conversation")
+        q = (
+            select(Run)
+            .where(Run.conversation_id == conversation_id)
+            .order_by(Run.queued_at.desc(), Run.run_id.desc())
+            .limit(limit)
+        )
+        runs = list((await s.execute(q)).scalars())
+    runs.reverse()
+    out = conversation_out(conv)
+    return {
+        "conversation_id": conv.id,
+        "totals": out["totals"],
+        "context": out["context"],
+        "runs": [run_out(r) for r in runs],
+    }
 
 
 @router.get("/conversations/{conversation_id}/messages")

@@ -27,7 +27,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 3 | Run queue, state machine, minimal REST + WebSocket, device tokens | done |
 | 4 | Tool steps, durable approvals, approval answers over WebSocket and REST | done |
 | 5 | Approval expiry, late approval, reconciliation after a gateway restart | done |
-| 6 | Token and context usage | next |
+| 6 | Token totals, context fill, per-run throughput | done |
 
 ## Development
 
@@ -86,6 +86,7 @@ Every endpoint except `/api/v1/health` and `/api/v1/meta` needs
 | `GET` | `/api/v1/conversations?limit=&cursor=&archived=` | newest first, keyset cursor |
 | `GET` | `/api/v1/conversations/{id}` | one conversation |
 | `GET` | `/api/v1/conversations/{id}/messages?before=&limit=` | oldest first |
+| `GET` | `/api/v1/conversations/{id}/usage?limit=` | totals, context, runs with `usage`/`perf` |
 | `PATCH` | `/api/v1/conversations/{id}` | `{thinking?, archived?}` |
 | `GET` | `/api/v1/approvals?status=pending,expired_in_hermes` | approval inbox |
 | `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
@@ -111,7 +112,8 @@ events for up to an hour, and a new `epoch` after a restart means: reload over R
 Server events: `conversation.created`, `conversation.updated`, `message.created`,
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
-`approval.request`, `approval.updated`, `reasoning.final`, `health.status`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
+`health.status`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -142,6 +144,28 @@ upgrades, 2 h for service restarts, 30 min otherwise):
 The backend polls Hermes' `/health`; when it comes back after an outage, approvals still
 pending for runs that no longer exist become `expired_in_hermes`. `health.status` events
 report each change.
+
+### Tokens and context
+
+Every conversation carries `totals` (the sum of its runs' Hermes `usage`: `input_tokens`,
+`output_tokens`, `cache_read_tokens`, `total_tokens`) and `context {tokens, max, pct, warn,
+measured_at}`, where `warn` is `pct >= 75`. Input tokens add up over every llama call of
+every run (a tool step means another call over the whole history), so `totals` is spend,
+not size; `context` is how full the window is.
+
+Context comes from llama-server's `/slots` (`n_prompt_tokens` includes the tokens decoded so
+far). The slot is sampled every second while a run is active, published as
+`context.updated {conversation_id, run_id, tokens, max, pct, warn, source, measured_at,
+final}`, and the run's last call is stored when it ends. Hermes' session-title call starts
+about 0.2 s after a run and overwrites the slot, so tasks seen before the run, newer tasks
+smaller than the run's context, and anything after completion are ignored. A run too short
+for any sample, with no tool steps, takes `input_tokens + output_tokens` (`source: usage`).
+For a thinking run the value includes the reasoning tokens of the last call.
+
+`runs.perf`: `sse_reconnects`, `first_delta_s` (from Hermes accepting the run to the first
+text delta; a thinking run reasons first), `context_source`, `llama_calls_seen`, and from
+`/metrics` differences `prompt_tokens` (prefilled, not cached), `predicted_tokens`,
+`prefill_tps`, `gen_tps`. If llama-server cannot be reached, runs carry on without these.
 
 ## Pre-commit hook
 

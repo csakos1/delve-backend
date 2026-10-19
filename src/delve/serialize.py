@@ -8,6 +8,8 @@ from typing import Any
 from delve.db.models import Approval, Conversation, Message, Run, ToolStep
 from delve.runs.steps import offered_choices
 
+CONTEXT_WARN_PCT = 75.0  # the app warns above this (plan 7.1)
+
 
 def iso(ts: datetime | None) -> str | None:
     return ts.isoformat() if ts else None
@@ -26,7 +28,19 @@ def conversation_out(c: Conversation) -> dict[str, Any]:
         "thinking": c.thinking,
         "origin": c.origin,
         "last_run_id": c.last_run_id,
-        "context": {"tokens": c.context_tokens, "max": c.context_max, "pct": pct},
+        "context": {
+            "tokens": c.context_tokens,
+            "max": c.context_max,
+            "pct": pct,
+            "warn": pct is not None and pct >= CONTEXT_WARN_PCT,
+            "measured_at": iso(c.context_measured_at),
+        },
+        "totals": {
+            "input_tokens": c.tokens_in,
+            "output_tokens": c.tokens_out,
+            "cache_read_tokens": c.tokens_cache_read,
+            "total_tokens": c.tokens_in + c.tokens_out,
+        },
     }
 
 
@@ -56,6 +70,7 @@ def run_out(r: Run) -> dict[str, Any]:
         "started_at": iso(r.started_at),
         "ended_at": iso(r.ended_at),
         "usage": r.usage,
+        "perf": r.perf,
         "error": r.error,
     }
 

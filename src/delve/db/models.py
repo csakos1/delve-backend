@@ -94,6 +94,12 @@ class Conversation(Base):
     context_tokens: Mapped[int | None] = mapped_column(Integer)
     context_max: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("65536"))
     context_measured_at: Mapped[datetime | None] = mapped_column(TZ)
+    # running totals of the runs' Hermes usage (decision 160)
+    tokens_in: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    tokens_out: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    tokens_cache_read: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
     origin: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'app'"))
 
     __table_args__ = (CheckConstraint("origin IN ('app','schedule')", name="origin"),)

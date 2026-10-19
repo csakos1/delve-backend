@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve.db.models import TERMINAL_RUN_STATUSES, Message, Run
 from delve.events import Envelope, EventHub, Subscription
 from delve.hermes.client import HermesClient, ThinkingRoute
+from delve.llama import LlamaClient
 from delve.runs.manager import RunManager, Timing
 
 from .fake_hermes import API_KEY, FIXTURES, FakeHermes, StreamingASGITransport
@@ -88,14 +89,19 @@ class Harness:
 
 
 @asynccontextmanager
-async def make_harness(db: async_sessionmaker[AsyncSession]) -> AsyncIterator[Harness]:
+async def make_harness(
+    db: async_sessionmaker[AsyncSession],
+    *,
+    llama: LlamaClient | None = None,
+    timing: Timing = FAST,
+) -> AsyncIterator[Harness]:
     fake = FakeHermes()
     hermes = HermesClient(
         "http://hermes", API_KEY, ROUTE, transport=StreamingASGITransport(fake.app)
     )
     hub = EventHub()
     sub = hub.subscribe()
-    mgr = RunManager(db, hermes, hub, timing=FAST)
+    mgr = RunManager(db, hermes, hub, timing=timing, llama=llama)
     try:
         yield Harness(fake, hermes, hub, sub, mgr, db)
     finally:

@@ -17,6 +17,7 @@ from delve.auth import create_device
 from delve.config import Settings
 
 from .fake_hermes import FakeHermes, StreamingASGITransport, load_json
+from .fake_llama import FakeLlama
 from .harness import FAST, final_output
 
 pytestmark = pytest.mark.pg
@@ -36,10 +37,18 @@ def fake() -> FakeHermes:
 
 
 @pytest.fixture
+def llama() -> FakeLlama:
+    fl = FakeLlama()
+    fl.set(task=100, processing=False, tokens=300)
+    return fl
+
+
+@pytest.fixture
 def client(
     env: pytest.MonkeyPatch,
     migrated_url: str,
     fake: FakeHermes,
+    llama: FakeLlama,
     db: async_sessionmaker[AsyncSession],
 ) -> Iterator[TestClient]:
     env.setenv("DELVE_DATABASE_URL", migrated_url)
@@ -47,6 +56,7 @@ def client(
     app = create_app(
         Settings(),  # type: ignore[call-arg]
         hermes_transport=StreamingASGITransport(fake.app),
+        llama_transport=StreamingASGITransport(llama.app),
         timing=FAST,
     )
     with TestClient(app) as c:
@@ -143,6 +153,43 @@ def test_rest_conversations_and_messages(client: TestClient, token: str, fake: F
 
 
 # --- WebSocket ---------------------------------------------------------------------------
+
+
+def test_rest_usage(client: TestClient, token: str, fake: FakeHermes) -> None:
+    fake.enqueue("protocol/e1")
+    fake.enqueue("protocol/e2")
+    with client.websocket_connect("/api/v1/ws") as ws:
+        hello(ws, token)
+        first = chat(ws, "one")
+        conv_id = next(f for f in first if f["type"] == "ack")["data"]["conversation_id"]
+        second = chat(ws, "two", fid="2", conversation_id=conv_id)
+        tail = until(ws, lambda f: f["type"] == "conversation.updated" and "totals" in f["data"])
+    ctxs = [f["data"] for f in first + second + tail if f["type"] == "context.updated"]
+    assert [c["tokens"] for c in ctxs] == [8098 + 22, 8141 + 12]
+    ctx = ctxs[-1]
+    assert (ctx["tokens"], ctx["final"], ctx["source"]) == (8141 + 12, True, "usage")
+
+    r = client.get(f"/api/v1/conversations/{conv_id}/usage", headers=auth(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["totals"] == {"input_tokens": 8098 + 8141, "output_tokens": 22 + 12,
+                              "cache_read_tokens": 8061 + 8119,
+                              "total_tokens": 8098 + 8141 + 22 + 12}  # fmt: skip
+    assert body["context"]["tokens"] == 8153 and body["context"]["max"] == 65536
+    assert body["context"]["pct"] == 12.4 and body["context"]["warn"] is False
+    runs = body["runs"]
+    assert [x["run_id"] for x in runs] == [
+        load_json("protocol/e1.create.json")["run_id"],
+        load_json("protocol/e2.create.json")["run_id"],
+    ]
+    assert runs[1]["usage"]["output_tokens"] == 12 and runs[1]["perf"]["context_source"] == "usage"
+    one = client.get(f"/api/v1/conversations/{conv_id}/usage?limit=1", headers=auth(token))
+    assert [x["run_id"] for x in one.json()["runs"]] == [runs[1]["run_id"]]
+
+    listed = client.get("/api/v1/conversations", headers=auth(token)).json()["data"]
+    assert listed[0]["totals"] == body["totals"] and listed[0]["context"] == body["context"]
+    assert client.get("/api/v1/conversations/c_nope/usage", headers=auth(token)).status_code == 404
+    assert client.get(f"/api/v1/conversations/{conv_id}/usage").status_code == 401
 
 
 def test_ws_rejects_bad_hello(client: TestClient, token: str) -> None:
