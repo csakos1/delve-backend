@@ -1,0 +1,196 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171720.5880332, "tool": "tool_search", "preview": "Searching tools \u00b7 publish water card", "seq": 0}
+
+id: 1
+data: {"event": "tool.completed", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171720.5941894, "tool": "tool_search", "duration": 0.01, "error": false, "preview": "{\"queries\": [\"publish water card\"], \"total_available\": 2, \"results\": [{\"query\": \"publish water card\", \"matches\": [\"publish_water_card\"]}], \"tools\": {\"publish_water_card\": {\"source\": \"plugin\", \"source_name\": \"agentcards\", \"description\": \"Publish a water-level card to the user's phone dashboard (Lake Balaton / harbour gauge). Use ONLY values you obtained from a tool output in this session (a measurement or a script result) - never estimate or invent numbers. Publishing runs nothing on the syste...", "seq": 1}
+
+id: 2
+data: {"event": "tool.started", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171722.5748448, "tool": "tool_describe", "preview": "Reading tool details \u00b7 1 tool", "seq": 2}
+
+id: 3
+data: {"event": "tool.completed", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171722.5794659, "tool": "tool_describe", "duration": 0.004, "error": false, "preview": "{\"tools\": {\"publish_water_card\": {\"description\": \"Publish a water-level card to the user's phone dashboard (Lake Balaton / harbour gauge). Use ONLY values you obtained from a tool output in this session (a measurement or a script result) - never estimate or invent numbers. Publishing runs nothing on the system. On a validation error, fix the listed fields once; do not retry more than once.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"severity\": {\"type\": \"string\", \"enum\": [\"info\", \"warn\"...", "seq": 3}
+
+id: 4
+data: {"event": "tool.started", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171729.780527, "tool": "publish_water_card", "preview": null, "seq": 4}
+
+id: 5
+data: {"event": "tool.completed", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171729.7845325, "tool": "publish_water_card", "duration": 0.003, "error": false, "preview": "{\"success\": true, \"card_id\": \"643692effbf845d9b4a0594509b03157\", \"type\": \"water\", \"severity\": \"info\", \"ts\": \"2026-10-16T17:28:49Z\"}", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.24343, "delta": "\n\nS", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.2971046, "delta": "ik", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.349156, "delta": "eres", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.3995988, "delta": " volt", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.451384, "delta": " a", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.501131, "delta": " ki", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171730.5519464, "delta": "ad\u00e1s", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0906758, "delta": ":", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.090751, "delta": " a", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0907998, "delta": " card", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0909736, "delta": "_id", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0910475, "delta": " `", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0910985, "delta": "6", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091147, "delta": "4", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0911746, "delta": "3", "seq": 20}
+
+id: 21
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0912282, "delta": "6", "seq": 21}
+
+id: 22
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091264, "delta": "9", "seq": 22}
+
+id: 23
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0912983, "delta": "2", "seq": 23}
+
+id: 24
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091342, "delta": "eff", "seq": 24}
+
+id: 25
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0913787, "delta": "bf", "seq": 25}
+
+id: 26
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0914164, "delta": "8", "seq": 26}
+
+id: 27
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0914567, "delta": "4", "seq": 27}
+
+id: 28
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091479, "delta": "5", "seq": 28}
+
+id: 29
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0915284, "delta": "d", "seq": 29}
+
+id: 30
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091561, "delta": "9", "seq": 30}
+
+id: 31
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0915942, "delta": "b", "seq": 31}
+
+id: 32
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0916274, "delta": "4", "seq": 32}
+
+id: 33
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0916598, "delta": "a", "seq": 33}
+
+id: 34
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0916898, "delta": "0", "seq": 34}
+
+id: 35
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.091717, "delta": "5", "seq": 35}
+
+id: 36
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0917656, "delta": "9", "seq": 36}
+
+id: 37
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0917978, "delta": "4", "seq": 37}
+
+id: 38
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0918324, "delta": "5", "seq": 38}
+
+id: 39
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0918899, "delta": "0", "seq": 39}
+
+id: 40
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0919209, "delta": "9", "seq": 40}
+
+id: 41
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0919514, "delta": "b", "seq": 41}
+
+id: 42
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0919821, "delta": "0", "seq": 42}
+
+id: 43
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0920398, "delta": "3", "seq": 43}
+
+id: 44
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.092074, "delta": "1", "seq": 44}
+
+id: 45
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0921052, "delta": "5", "seq": 45}
+
+id: 46
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0921354, "delta": "7", "seq": 46}
+
+id: 47
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0921657, "delta": "`", "seq": 47}
+
+id: 48
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0921957, "delta": "-", "seq": 48}
+
+id: 49
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.09223, "delta": "es", "seq": 49}
+
+id: 50
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0922873, "delta": " water", "seq": 50}
+
+id: 51
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0923214, "delta": " k", "seq": 51}
+
+id: 52
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0923555, "delta": "\u00e1r", "seq": 52}
+
+id: 53
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0923903, "delta": "ty", "seq": 53}
+
+id: 54
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.092424, "delta": "a", "seq": 54}
+
+id: 55
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.092459, "delta": " meg", "seq": 55}
+
+id: 56
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.092485, "delta": "jelent", "seq": 56}
+
+id: 57
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0925171, "delta": " a", "seq": 57}
+
+id: 58
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0925922, "delta": " telefon", "seq": 58}
+
+id: 59
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0926373, "delta": " dashboard", "seq": 59}
+
+id: 60
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0926723, "delta": "on", "seq": 60}
+
+id: 61
+data: {"event": "message.delta", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0927048, "delta": ".", "seq": 61}
+
+id: 62
+data: {"event": "reasoning.available", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.0979924, "text": "Sikeres volt a kiad\u00e1s: a card_id `643692effbf845d9b4a0594509b03157`-es water k\u00e1rtya megjelent a telefon dashboardon.", "seq": 62}
+
+id: 63
+data: {"event": "run.completed", "run_id": "run_03804a128a81482bbe6d4af645516887", "timestamp": 1792171733.1123261, "output": "Sikeres volt a kiad\u00e1s: a card_id `643692effbf845d9b4a0594509b03157`-es water k\u00e1rtya megjelent a telefon dashboardon.", "usage": {"input_tokens": 34512, "output_tokens": 251, "total_tokens": 34763, "cache_read_tokens": 25515, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 63}
+
+: stream closed
+

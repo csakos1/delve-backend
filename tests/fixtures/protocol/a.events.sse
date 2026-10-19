@@ -1,0 +1,109 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147128.0257895, "tool": "terminal", "preview": "uptime", "seq": 0}
+
+id: 1
+data: {"event": "tool.completed", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147128.2477577, "tool": "terminal", "duration": 0.22, "error": false, "preview": "{\"output\": \"12:38:48 up 1 day,  1:50,  3 users,  load average: 1.33, 1.07, 1.02\", \"exit_code\": 0, \"error\": null}", "seq": 1}
+
+id: 2
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147128.524852, "delta": "\n\nLoad", "seq": 2}
+
+id: 3
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147128.5778158, "delta": " average", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124115, "delta": ":", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1242993, "delta": " ", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1243947, "delta": "1", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1244323, "delta": ".", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124458, "delta": "3", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1245112, "delta": "3", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1245399, "delta": " (", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124601, "delta": "1", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1246488, "delta": " perc", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124689, "delta": "),", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1247263, "delta": " ", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124762, "delta": "1", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1248076, "delta": ".", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1248531, "delta": "0", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.124887, "delta": "7", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1249201, "delta": " (", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1249537, "delta": "5", "seq": 20}
+
+id: 21
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1250052, "delta": " perc", "seq": 21}
+
+id: 22
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1250398, "delta": "),", "seq": 22}
+
+id: 23
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1250737, "delta": " ", "seq": 23}
+
+id: 24
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1251056, "delta": "1", "seq": 24}
+
+id: 25
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1251366, "delta": ".", "seq": 25}
+
+id: 26
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1251748, "delta": "0", "seq": 26}
+
+id: 27
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1252127, "delta": "2", "seq": 27}
+
+id: 28
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1252477, "delta": " (", "seq": 28}
+
+id: 29
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1252806, "delta": "1", "seq": 29}
+
+id: 30
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1253138, "delta": "5", "seq": 30}
+
+id: 31
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1254551, "delta": " perc", "seq": 31}
+
+id: 32
+data: {"event": "message.delta", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.12564, "delta": ").", "seq": 32}
+
+id: 33
+data: {"event": "reasoning.available", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1312397, "text": "Load average: 1.33 (1 perc), 1.07 (5 perc), 1.02 (15 perc).", "seq": 33}
+
+id: 34
+data: {"event": "run.completed", "run_id": "run_1fa3ea593870452d9b784ca355e42119", "timestamp": 1792147130.1426044, "output": "Load average: 1.33 (1 perc), 1.07 (5 perc), 1.02 (15 perc).", "usage": {"input_tokens": 16290, "output_tokens": 58, "total_tokens": 16348, "cache_read_tokens": 8117, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 34}
+
+: stream closed
+

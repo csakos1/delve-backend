@@ -1,0 +1,109 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179867.3104017, "tool": "terminal", "preview": "rm -r ~/soultest", "seq": 0}
+
+id: 1
+data: {"command": "rm -r ~/soultest", "pattern_key": "recursive delete", "pattern_keys": ["recursive delete"], "description": "recursive delete", "allow_permanent": true, "allow_session": true, "request_id": "344e414fe36b4b578b86a6ca82628211", "event": "approval.request", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179867.5313966, "choices": ["once", "session", "always", "deny"], "seq": 1}
+
+id: 2
+data: {"event": "approval.responded", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179868.558507, "choice": "deny", "request_id": "344e414fe36b4b578b86a6ca82628211", "resolved": 1, "seq": 2}
+
+id: 3
+data: {"event": "tool.completed", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179868.5755212, "tool": "terminal", "duration": 1.257, "error": true, "preview": "{\"output\": \"\", \"exit_code\": -1, \"error\": \"BLOCKED: Command denied by user. The user has NOT consented to this action. Do NOT retry this command, do NOT rephrase it, and do NOT attempt the same outcome via a different command. Stop the current workflow and wait for the user to respond before taking any further destructive or irreversible action.\", \"status\": \"blocked\", \"user_summary\": \"You denied this command \u2014 it did not run.\"}", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179868.8951614, "delta": "\n\nThe", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179868.9485414, "delta": " command", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.001473, "delta": " was", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.0520227, "delta": " blocked", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.1026201, "delta": " \u2014", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.1533017, "delta": " you", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.2038832, "delta": " denied", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.2542114, "delta": " it", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.304686, "delta": ",", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.3551178, "delta": " so", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.4054475, "delta": " it", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.4557517, "delta": " didn", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.5061188, "delta": "'t", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.5562856, "delta": " run", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.6064672, "delta": " and", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.6566377, "delta": " nothing", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.707055, "delta": " was", "seq": 20}
+
+id: 21
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.7572198, "delta": " deleted", "seq": 21}
+
+id: 22
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.8073552, "delta": ".", "seq": 22}
+
+id: 23
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.857553, "delta": " Let", "seq": 23}
+
+id: 24
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.9079528, "delta": " me", "seq": 24}
+
+id: 25
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179869.9581106, "delta": " know", "seq": 25}
+
+id: 26
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.0082963, "delta": " how", "seq": 26}
+
+id: 27
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.058636, "delta": " you", "seq": 27}
+
+id: 28
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.1089282, "delta": "'d", "seq": 28}
+
+id: 29
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.1591043, "delta": " like", "seq": 29}
+
+id: 30
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.209325, "delta": " to", "seq": 30}
+
+id: 31
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.2595105, "delta": " proceed", "seq": 31}
+
+id: 32
+data: {"event": "message.delta", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.3097086, "delta": ".", "seq": 32}
+
+id: 33
+data: {"event": "reasoning.available", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.3659234, "text": "The command was blocked \u2014 you denied it, so it didn't run and nothing was deleted. Let me know how you'd like to proceed.", "seq": 33}
+
+id: 34
+data: {"event": "run.completed", "run_id": "run_bde2a2ea05e14a118de19b1f5b16ffd8", "timestamp": 1792179870.3807588, "output": "The command was blocked \u2014 you denied it, so it didn't run and nothing was deleted. Let me know how you'd like to proceed.", "usage": {"input_tokens": 17284, "output_tokens": 62, "total_tokens": 17346, "cache_read_tokens": 8599, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 34}
+
+: stream closed
+

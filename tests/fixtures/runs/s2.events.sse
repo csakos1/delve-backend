@@ -1,0 +1,226 @@
+: open
+
+id: 0
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179871.894486, "delta": "I", "seq": 0}
+
+id: 1
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179871.894573, "delta": "'ll", "seq": 1}
+
+id: 2
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179871.9475262, "delta": " try", "seq": 2}
+
+id: 3
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179871.997624, "delta": " the", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.0478096, "delta": " publish", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.0980356, "delta": " with", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.148252, "delta": " the", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.1985247, "delta": " exact", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.2487035, "delta": " values", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.2988904, "delta": " you", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.3490615, "delta": " gave", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.3992157, "delta": ",", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.4493718, "delta": " then", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.4995477, "delta": " see", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.5497036, "delta": " how", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.59988, "delta": " it", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.650198, "delta": " responds", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.7004085, "delta": ".", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179872.7505052, "delta": "\n\n", "seq": 18}
+
+id: 19
+data: {"event": "reasoning.available", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.1852565, "text": "I'll try the publish with the exact values you gave, then see how it responds.", "seq": 19}
+
+id: 20
+data: {"event": "message.interim", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.1884084, "text": "I'll try the publish with the exact values you gave, then see how it responds.", "already_streamed": true, "seq": 20}
+
+id: 21
+data: {"event": "tool.started", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.1901922, "tool": "publish_water_card", "preview": null, "seq": 21}
+
+id: 22
+data: {"event": "tool.completed", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.193132, "tool": "publish_water_card", "duration": 0.002, "error": true, "preview": "{\"success\": false, \"error\": \"validation_failed\", \"details\": [\"severity: must be one of info, warn, alert\"]}", "seq": 22}
+
+id: 23
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.6073384, "delta": "\n\nGot", "seq": 23}
+
+id: 24
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.6602716, "delta": " a", "seq": 24}
+
+id: 25
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.7121885, "delta": " validation", "seq": 25}
+
+id: 26
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.7624784, "delta": " error", "seq": 26}
+
+id: 27
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.8126495, "delta": " as", "seq": 27}
+
+id: 28
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179878.8628094, "delta": " expected", "seq": 28}
+
+id: 29
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7169, "delta": ":", "seq": 29}
+
+id: 30
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.716987, "delta": " severity", "seq": 30}
+
+id: 31
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7170255, "delta": " critical", "seq": 31}
+
+id: 32
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7170527, "delta": " is", "seq": 32}
+
+id: 33
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.717279, "delta": " not", "seq": 33}
+
+id: 34
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7173834, "delta": " accepted", "seq": 34}
+
+id: 35
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7174428, "delta": " (", "seq": 35}
+
+id: 36
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7174988, "delta": "allowed", "seq": 36}
+
+id: 37
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7175362, "delta": ":", "seq": 37}
+
+id: 38
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7175791, "delta": " info", "seq": 38}
+
+id: 39
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7176127, "delta": ",", "seq": 39}
+
+id: 40
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7176578, "delta": " warn", "seq": 40}
+
+id: 41
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7176933, "delta": ",", "seq": 41}
+
+id: 42
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7177415, "delta": " alert", "seq": 42}
+
+id: 43
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7177782, "delta": ").", "seq": 43}
+
+id: 44
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7178123, "delta": "\n\n", "seq": 44}
+
+id: 45
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.7178483, "delta": "Per", "seq": 45}
+
+id: 46
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.767002, "delta": " your", "seq": 46}
+
+id: 47
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.817113, "delta": " instructions", "seq": 47}
+
+id: 48
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.9173357, "delta": " I", "seq": 48}
+
+id: 49
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.917389, "delta": " won", "seq": 49}
+
+id: 50
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179879.9674208, "delta": "'t", "seq": 50}
+
+id: 51
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.0177813, "delta": " guess", "seq": 51}
+
+id: 52
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.0679333, "delta": " a", "seq": 52}
+
+id: 53
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.1181517, "delta": " replacement", "seq": 53}
+
+id: 54
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.168261, "delta": ".", "seq": 54}
+
+id: 55
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.2184696, "delta": " Which", "seq": 55}
+
+id: 56
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.2687767, "delta": " severity", "seq": 56}
+
+id: 57
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.3190434, "delta": " should", "seq": 57}
+
+id: 58
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.4196038, "delta": " I", "seq": 58}
+
+id: 59
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.4197178, "delta": " use", "seq": 59}
+
+id: 60
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.4703965, "delta": " for", "seq": 60}
+
+id: 61
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.5205367, "delta": " the", "seq": 61}
+
+id: 62
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.5706983, "delta": " corrected", "seq": 62}
+
+id: 63
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.671125, "delta": " retry", "seq": 63}
+
+id: 64
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.6712818, "delta": " \u2014", "seq": 64}
+
+id: 65
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.7212355, "delta": " info", "seq": 65}
+
+id: 66
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.7714133, "delta": ",", "seq": 66}
+
+id: 67
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.8215232, "delta": " warn", "seq": 67}
+
+id: 68
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.8716552, "delta": ",", "seq": 68}
+
+id: 69
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.921844, "delta": " or", "seq": 69}
+
+id: 70
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179880.972065, "delta": " alert", "seq": 70}
+
+id: 71
+data: {"event": "message.delta", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179881.0225575, "delta": "?", "seq": 71}
+
+id: 72
+data: {"event": "reasoning.available", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179881.0788815, "text": "Got a validation error as expected: severity critical is not accepted (allowed: info, warn, alert).\n\nPer your instructions I won't guess a replacement. Which severity should I use for the corrected retry \u2014 info, warn, or alert?", "seq": 72}
+
+id: 73
+data: {"event": "run.completed", "run_id": "run_d8b7d3b7a4754971aefee529e054c922", "timestamp": 1792179881.0909564, "output": "Got a validation error as expected: severity critical is not accepted (allowed: info, warn, alert).\n\nPer your instructions I won't guess a replacement. Which severity should I use for the corrected retry \u2014 info, warn, or alert?", "usage": {"input_tokens": 17400, "output_tokens": 177, "total_tokens": 17577, "cache_read_tokens": 17151, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 73}
+
+: stream closed
+

@@ -1,0 +1,15 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_3db34fa9950c4895a308ed9c2636db3c", "timestamp": 1792153865.7856827, "tool": "terminal", "preview": "sleep 60 + 1 command", "seq": 0}
+
+: keepalive
+
+id: 1
+data: {"event": "tool.completed", "run_id": "run_3db34fa9950c4895a308ed9c2636db3c", "timestamp": 1792153883.0211658, "tool": "terminal", "duration": 17.227, "error": true, "preview": "{\"output\": \"[Command interrupted]\", \"exit_code\": 130, \"error\": null}", "seq": 1}
+
+id: 2
+data: {"event": "run.cancelled", "run_id": "run_3db34fa9950c4895a308ed9c2636db3c", "timestamp": 1792153883.04048, "completed": false, "partial": false, "interrupted": true, "turn_exit_reason": "interrupted_by_user", "seq": 2}
+
+: stream closed
+

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Blocks commits whose staged content contains secrets or host identifiers.
+set -u
+DENY="${AGENT_INFRA_DENYLIST:-$HOME/.config/agent-infra/denylist.txt}"
+[ -r "$DENY" ] || { echo "pre-commit: denylist missing: $DENY" >&2; exit 1; }
+if grep -qxE '[[:space:]]*' "$DENY"; then echo "pre-commit: empty line in denylist" >&2; exit 1; fi
+fail=0
+for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+  if printf '%s\n' "$f" | grep -qiF -f "$DENY"; then echo "BLOCKED (path): $f" >&2; fail=1; fi
+  if git show ":$f" | grep -naiF -f "$DENY" >/dev/null; then
+    echo "BLOCKED (denylist): $f" >&2; git show ":$f" | grep -naiF -f "$DENY" | cut -c1-120 >&2; fail=1; fi
+  if git show ":$f" | grep -naE '[0-9a-fA-F]{64}' >/dev/null; then
+    echo "BLOCKED (64-hex, possible key): $f" >&2; fail=1; fi
+done
+if command -v gitleaks >/dev/null 2>&1; then
+  if gitleaks --help 2>&1 | grep -qE '^[[:space:]]+git[[:space:]]'; then
+    gitleaks git --pre-commit --staged --redact --no-banner -v >&2 || { echo "BLOCKED (gitleaks)" >&2; fail=1; }
+  else
+    gitleaks protect --staged --redact --no-banner -v >&2 || { echo "BLOCKED (gitleaks)" >&2; fail=1; }
+  fi
+else
+  echo "pre-commit: WARNING gitleaks not installed, skipped" >&2
+fi
+[ "$fail" -eq 0 ] || { echo "pre-commit: commit aborted" >&2; exit 1; }

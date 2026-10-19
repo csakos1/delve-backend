@@ -1,0 +1,75 @@
+: open
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151589.0090961, "tool": "terminal", "preview": "rm -r /tmp/x", "seq": 0}
+
+id: 1
+data: {"command": "rm -r /tmp/x", "pattern_key": "delete in root path", "pattern_keys": ["delete in root path"], "description": "delete in root path", "allow_permanent": true, "allow_session": true, "request_id": "9a498aa517494a869dbf623f95b62d44", "event": "approval.request", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151589.1506855, "choices": ["once", "session", "always", "deny"], "seq": 1}
+
+: keepalive
+
+id: 2
+data: {"event": "approval.responded", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151603.53106, "choice": "once", "request_id": "9a498aa517494a869dbf623f95b62d44", "resolved": 1, "seq": 2}
+
+id: 3
+data: {"event": "tool.completed", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151603.7130342, "tool": "terminal", "duration": 14.595, "error": false, "preview": "{\"output\": \"\", \"exit_code\": 0, \"error\": null, \"approval\": \"Command required approval (delete in root path) and was approved by the user.\"}", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151603.9815829, "delta": "\n\nK", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.0363185, "delta": "\u00e9sz", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.0907025, "delta": ",", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.1430995, "delta": " a", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.195369, "delta": " m", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.247493, "delta": "app", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.299804, "delta": "\u00e1t", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.3529134, "delta": " t\u00f6r", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.405265, "delta": "\u00f6l", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.4571435, "delta": "tem", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.509547, "delta": " (", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.561331, "delta": "exit", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.6133325, "delta": " code", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.8779519, "delta": ":", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.8780394, "delta": " ", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.8780735, "delta": "0", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.8781028, "delta": ").", "seq": 20}
+
+id: 21
+data: {"event": "reasoning.available", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.94435, "text": "K\u00e9sz, a mapp\u00e1t t\u00f6r\u00f6ltem (exit code: 0).", "seq": 21}
+
+id: 22
+data: {"event": "run.completed", "run_id": "run_2e98aaff26d64dcaae6e430b519fa7c0", "timestamp": 1792151604.97167, "output": "K\u00e9sz, a mapp\u00e1t t\u00f6r\u00f6ltem (exit code: 0).", "usage": {"input_tokens": 16271, "output_tokens": 49, "total_tokens": 16320, "cache_read_tokens": 16212, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 22}
+
+: stream closed
+

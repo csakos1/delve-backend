@@ -1,0 +1,73 @@
+: open
+
+id: 0
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153653.8727193, "delta": "Ny", "seq": 0}
+
+id: 1
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153653.9292502, "delta": "ugt", "seq": 1}
+
+id: 2
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153653.986292, "delta": "atom", "seq": 2}
+
+id: 3
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9790778, "delta": ":", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9791973, "delta": " megj", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979234, "delta": "eg", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9793243, "delta": "yez", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9793932, "delta": "tem", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979451, "delta": ",", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979487, "delta": " a", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979541, "delta": " tes", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979576, "delta": "zt", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.97961, "delta": " k", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9796498, "delta": "\u00f3", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9796772, "delta": "ds", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9797163, "delta": "z\u00f3", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9797506, "delta": " K", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9797843, "delta": "ORM", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9798183, "delta": "\u00c1", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.979864, "delta": "NY", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9798987, "delta": ".", "seq": 20}
+
+id: 21
+data: {"event": "reasoning.available", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153654.9988828, "text": "Nyugtatom: megjegyeztem, a teszt k\u00f3dsz\u00f3 KORM\u00c1NY.", "seq": 21}
+
+id: 22
+data: {"event": "run.completed", "run_id": "run_cb3fc3d2b213423c99a1a0eef4d23405", "timestamp": 1792153655.0102143, "output": "Nyugtatom: megjegyeztem, a teszt k\u00f3dsz\u00f3 KORM\u00c1NY.", "usage": {"input_tokens": 8098, "output_tokens": 22, "total_tokens": 8120, "cache_read_tokens": 8061, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 22}
+
+: stream closed
+

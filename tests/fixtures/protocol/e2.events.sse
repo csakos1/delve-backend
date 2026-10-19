@@ -1,0 +1,43 @@
+: open
+
+id: 0
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.3409474, "delta": "A", "seq": 0}
+
+id: 1
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.39701, "delta": " k", "seq": 1}
+
+id: 2
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.452357, "delta": "\u00f3", "seq": 2}
+
+id: 3
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.50491, "delta": "ds", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.557871, "delta": "z\u00f3", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9248793, "delta": ":", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9250104, "delta": " K", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.925365, "delta": "ORM", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9254346, "delta": "\u00c1", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9254768, "delta": "NY", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9255288, "delta": ".", "seq": 10}
+
+id: 11
+data: {"event": "reasoning.available", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9311252, "text": "A k\u00f3dsz\u00f3: KORM\u00c1NY.", "seq": 11}
+
+id: 12
+data: {"event": "run.completed", "run_id": "run_c48a7ee4c065460c88c8151283645a77", "timestamp": 1792153736.9397244, "output": "A k\u00f3dsz\u00f3: KORM\u00c1NY.", "usage": {"input_tokens": 8141, "output_tokens": 12, "total_tokens": 8153, "cache_read_tokens": 8119, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 12}
+
+: stream closed
+

@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"     # weekly full-history secret scan
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lint:
+    name: ruff + mypy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -e '.[dev]'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+
+  test:
+    name: pytest (py${{ matrix.python }}, PostgreSQL 18)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: delve_test
+          POSTGRES_PASSWORD: delve_test
+          POSTGRES_DB: delve_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U delve_test"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      DELVE_TEST_DATABASE_URL: postgresql+asyncpg://delve_test:delve_test@127.0.0.1:5432/delve_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e '.[dev]'
+      - name: hook syntax
+        run: sh -n .githooks/pre-commit
+      - name: pytest (database tests must not be skipped)
+        run: pytest -rs -p no:cacheprovider | tee /tmp/pytest.log; test "${PIPESTATUS[0]}" -eq 0
+        shell: bash
+      - name: fail if any test was skipped
+        run: "! grep -q '^SKIPPED' /tmp/pytest.log"
+      - name: offline migration SQL renders
+        run: alembic upgrade head --sql > /dev/null

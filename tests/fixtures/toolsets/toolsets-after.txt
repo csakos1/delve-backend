@@ -1,0 +1,5 @@
+terminal True ['process_manage', 'terminal']
+file True ['patch', 'read_file', 'search_files', 'write_file']
+vision True ['vision_analyze']
+skills True ['skill_manage', 'skill_view', 'skills_list']
+agentcards True ['publish_water_card']
