@@ -18,6 +18,7 @@ dependencies = [
   "asyncpg>=0.30",
   "alembic>=1.14",
   "httpx>=0.28",
+  "websockets>=14",  # uvicorn's WebSocket implementation
 ]
 
 [project.optional-dependencies]

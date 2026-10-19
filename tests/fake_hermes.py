@@ -59,10 +59,16 @@ class Scenario:
 
     run_id: str
     events: str
-    status: str | None = None  # fixture path for GET /v1/runs/{id}
+    status: str | dict[str, Any] | None = None  # GET /v1/runs/{id}: fixture path or body
     cut_after_seq: int | None = None  # end the stream early, without a terminal event
+    cut_once: bool = False  # cut only the first connection; reconnects get the rest
     honour_last_event_id: bool = True
     approvals: dict[str, Any] = field(default_factory=dict)  # request_id -> response/error
+    # hold the stream before this seq until POST /stop (or `release.set()`)
+    pause_before_seq: int | None = None
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+    connections: int = 0
+    stopped: bool = False
 
 
 @dataclass
@@ -176,16 +182,26 @@ class FakeHermes:
             if sc is None:
                 return _err(404, "run_not_found", f"Run not found: {run_id}")
             text = load_text(sc.events)
-            if sc.cut_after_seq is not None:
+            sc.connections += 1
+            if sc.cut_after_seq is not None and not (sc.cut_once and sc.connections > 1):
                 text = sse_cut(text, sc.cut_after_seq)
             lei = request.headers.get("last-event-id")
             if sc.honour_last_event_id and lei and lei.isdigit():
                 text = sse_after(text, int(lei))
+            parts = [text]
+            if sc.pause_before_seq is not None:
+                marker = f"id: {sc.pause_before_seq}\n"
+                at = text.find(marker)
+                if at > 0:
+                    parts = [text[:at], text[at:]]
 
             async def gen() -> AsyncIterator[bytes]:
-                for i in range(0, len(text), fake.chunk_size):
-                    yield text[i : i + fake.chunk_size].encode("utf-8")
-                    await asyncio.sleep(0)
+                for n, part in enumerate(parts):
+                    if n:
+                        await sc.release.wait()
+                    for i in range(0, len(part), fake.chunk_size):
+                        yield part[i : i + fake.chunk_size].encode("utf-8")
+                        await asyncio.sleep(0)
 
             return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -194,7 +210,7 @@ class FakeHermes:
             sc = fake.runs.get(run_id)
             if sc is None or sc.status is None:
                 return _err(404, "run_not_found", f"Run not found: {run_id}")
-            return JSONResponse(load_json(sc.status))
+            return JSONResponse(sc.status if isinstance(sc.status, dict) else load_json(sc.status))
 
         @app.post("/v1/runs/{run_id}/approval")
         async def approval(run_id: str, request: Request) -> Response:
@@ -211,8 +227,11 @@ class FakeHermes:
 
         @app.post("/v1/runs/{run_id}/stop")
         async def stop(run_id: str) -> Response:
-            if run_id not in fake.runs:
+            sc = fake.runs.get(run_id)
+            if sc is None:
                 return _err(404, "run_not_found", f"Run not found: {run_id}")
+            sc.stopped = True
+            sc.release.set()
             return JSONResponse({"run_id": run_id, "status": "stopping"})
 
         @app.get("/api/sessions/{sid}")

@@ -37,6 +37,25 @@ NAMING_CONVENTION = {
 
 TZ = DateTime(timezone=True)
 
+RUN_STATUSES = (
+    "queued",
+    "starting",
+    "running",
+    "waiting_for_approval",
+    "stopping",
+    "reconnecting",
+    "completed",
+    "cancelled",
+    "failed",
+)
+ACTIVE_RUN_STATUSES = ("starting", "running", "waiting_for_approval", "stopping", "reconnecting")
+TERMINAL_RUN_STATUSES = ("completed", "cancelled", "failed")
+MESSAGE_STATUSES = ("streaming", "final", "cancelled", "failed")
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({','.join(repr(v) for v in values)})"
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
@@ -76,6 +95,8 @@ class Message(Base):
     run_id: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    # Hermes `message.interim` text(s) of the run; shown apart from the answer (N27)
+    interim: Mapped[str | None] = mapped_column(Text)
     reasoning: Mapped[str | None] = mapped_column(Text)  # Hermes /messages 'reasoning'
     hermes_message_id: Mapped[str | None] = mapped_column(Text)
     client_msg_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), unique=True)
@@ -84,6 +105,7 @@ class Message(Base):
 
     __table_args__ = (
         CheckConstraint("role IN ('user','assistant','tool','system')", name="role"),
+        CheckConstraint(_in("status", MESSAGE_STATUSES), name="status"),
         Index(None, "conversation_id", "id"),
         Index(
             "uq_messages_conversation_id_hermes_message_id",
@@ -142,6 +164,7 @@ class Run(Base):
 
     __table_args__ = (
         CheckConstraint("origin IN ('app','late_approval','schedule','system')", name="origin"),
+        CheckConstraint(_in("status", RUN_STATUSES), name="status"),
         Index(None, "status"),
     )
 
