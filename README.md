@@ -23,8 +23,8 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | Step | Content | State |
 |---|---|---|
 | 1 | Repository skeleton, config, logging, database schema (Alembic) | done |
-| 2 | SSE parser, Hermes client, fake Hermes for tests | next |
-| 3 | Run queue, state machine, minimal REST + WebSocket | planned |
+| 2 | SSE parser, Hermes client, fake Hermes for tests | done |
+| 3 | Run queue, state machine, minimal REST + WebSocket | next |
 | 4–5 | Tool steps, approvals, timeouts, late approval, recovery | planned |
 
 ## Development
