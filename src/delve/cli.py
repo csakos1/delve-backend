@@ -16,6 +16,8 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, InterfaceError, OperationalError, ProgrammingError
 
 from delve.auth import create_device, create_pairing_code, format_code, revoke_device
 from delve.db.models import Device
@@ -129,10 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if args.command in (None, "serve"):
-        return _serve()
+def _db_commands(args: argparse.Namespace) -> int:
     if args.command == "pair":
         try:
             return asyncio.run(_pair(args.name, args.ttl))
@@ -144,3 +143,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.action == "list":
         return asyncio.run(_token_list())
     return asyncio.run(_token_revoke(args.device_id))
+
+
+def _db_name() -> str:
+    try:
+        return make_url(_db_url()).database or "?"
+    except ArgumentError:
+        return "?"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.command in (None, "serve"):
+        return _serve()
+    try:
+        return _db_commands(args)
+    except ProgrammingError as exc:
+        if "does not exist" not in str(exc.orig):
+            raise
+        print(
+            f"database '{_db_name()}' is not migrated: run `alembic upgrade head` "
+            "(with the same DELVE_DATABASE_URL)",
+            file=sys.stderr,
+        )
+        return 3
+    except (OperationalError, InterfaceError, OSError) as exc:
+        print(f"cannot reach database '{_db_name()}': {type(exc).__name__}", file=sys.stderr)
+        return 3

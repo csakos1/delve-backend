@@ -1,0 +1,5 @@
+#!/bin/sh
+# delve-backend CLI as the `delve` user with /etc/delve/env:  sudo delve pair | token list | ...
+set -eu
+[ "$(id -u)" -eq 0 ] || { echo "delve: run with sudo" >&2; exit 1; }
+exec sudo -u delve sh -c 'set -a; . /etc/delve/env; set +a; exec /opt/delve/current/venv/bin/delve-backend "$@"' sh "$@"

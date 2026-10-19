@@ -221,3 +221,26 @@ async def test_hello_ok_carries_status(
     assert data["thinking_route"] == {
         "ok": False, "run_id": "run_x", "at": "2026-10-19T20:00:00+00:00"
     }  # fmt: skip
+
+
+def test_cli_explains_an_unmigrated_database(pg_url: str) -> None:
+    """A database without the schema gets one line, not a traceback."""
+    from sqlalchemy.engine import make_url
+
+    empty = make_url(pg_url).set(database="postgres")  # the maintenance db has no schema
+    env = {**os.environ, "DELVE_DATABASE_URL": empty.render_as_string(hide_password=False)}
+    r = subprocess.run(  # fixed argv, test-only
+        [sys.executable, "-m", "delve", "token", "list"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert r.returncode == 3, r.stderr
+    assert "'postgres' is not migrated" in r.stderr and "Traceback" not in r.stderr
+
+
+def test_cli_explains_an_unreachable_database() -> None:
+    env = {**os.environ, "DELVE_DATABASE_URL": "postgresql+asyncpg://nobody@127.0.0.1:1/none"}
+    r = subprocess.run(  # fixed argv, test-only
+        [sys.executable, "-m", "delve", "pair"],
+        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert r.returncode == 3 and "cannot reach database 'none'" in r.stderr

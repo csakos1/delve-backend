@@ -82,6 +82,21 @@ list` and `delve-backend token revoke <device-id>` manage devices (revoking also
 FCM token). Only SHA-256 hashes of codes and tokens are stored. These commands need only
 `DELVE_DATABASE_URL`.
 
+## Deployment
+
+Production runs as the `delve` system user from `/opt/delve/current`, as a hardened system
+unit (unit file, user and env helper in
+[`delve-infra`](https://github.com/csakos1/delve-infra), installation steps 11–13).
+
+```sh
+sudo deploy/install.sh [REV]     # build /opt/delve/releases/<sha>, migrate, switch, restart
+sudo delve pair                  # the CLI as `delve` with /etc/delve/env (deploy/delve)
+```
+
+A release is a venv built from `git archive REV` plus its migrations; the newest three are
+kept besides the current one, and installing an older sha switches back to it (without
+downgrading the schema).
+
 ## API
 
 Every endpoint except `/api/v1/health`, `/api/v1/meta` and `/api/v1/devices/register`
