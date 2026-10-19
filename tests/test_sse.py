@@ -28,7 +28,7 @@ def _text(p: Path) -> str:
 
 
 def test_fixtures_present() -> None:
-    assert len(SSE_FIXTURES) == 19
+    assert len(SSE_FIXTURES) == 21
 
 
 @pytest.mark.parametrize("path", SSE_FIXTURES, ids=IDS)

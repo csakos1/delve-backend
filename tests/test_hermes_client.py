@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -17,6 +18,7 @@ from delve.hermes.client import (
     build_run_body,
     capability_problems,
     new_reasoning,
+    route_applied,
 )
 from delve.hermes.models import Health, SessionMessage
 from delve.hermes.sse import parse_events
@@ -70,17 +72,26 @@ def test_run_body_content_parts_and_empty() -> None:
             build_run_body(session_id="c", input=empty, thinking=False, route=ROUTE)
 
 
-def test_capability_problems() -> None:
-    from .fake_hermes import SYNTHETIC_CAPABILITIES as caps
-
-    ok = Health(status="ok", platform="hermes-agent", version="0.22.2")
+def test_capability_problems_on_recorded_capabilities() -> None:
+    caps = load_json("protocol/capabilities.json")
+    assert "run_stop" not in caps and caps["features"]["run_stop"] is True  # nested shape
+    ok = Health.model_validate(load_json("protocol/health.json"))
     assert capability_problems(caps, ok, "0.22.2") == []
-    nested = {"features": {k: {"supported": True} for k in caps if caps[k] is True}}
-    assert capability_problems(nested, ok, "0.22.2") == []
-    broken = {**caps, "run_stop": False}
+    flat = {k: v for k, v in caps["features"].items() if v is True}
+    assert capability_problems(flat, ok, "0.22.2") == []
+    broken = {**caps, "features": {**caps["features"], "run_stop": False}}
     assert capability_problems(broken, ok, "0.22.2") == ["capability run_stop missing"]
     old = Health(status="ok", version="0.21.0")
     assert capability_problems(caps, old, "0.22.2") == ["version '0.21.0' != expected '0.22.2'"]
+
+
+def test_route_applied() -> None:
+    think = load_json("protocol/think.final.json")["runtime"]
+    route = ThinkingRoute(think["requested"]["provider"], think["requested"]["model"])
+    assert route_applied(think, route)
+    assert not route_applied(load_json("protocol/a.final.json")["runtime"], route)  # global
+    assert not route_applied(think, ThinkingRoute(route.provider, "/other.gguf"))
+    assert not route_applied(None, route)
 
 
 # --- endpoints against the fake ------------------------------------------------
@@ -286,3 +297,64 @@ async def test_non_json_error_body() -> None:
         with pytest.raises(HermesError) as ei:
             await c.get_run("run_x")
     assert ei.value.status == 502 and ei.value.code is None
+
+
+async def test_get_session_unwraps_session_object(client: HermesClient, fake: FakeHermes) -> None:
+    raw = load_json("protocol/think.session.json")
+    sid = raw["session"]["id"]
+    fake.sessions[sid] = raw
+    info = await client.get_session(sid)
+    assert info.id == sid
+    assert info.title and info.title.startswith("Tool hasznalata nelkul")
+    assert (info.message_count, info.api_call_count) == (2, 1)
+
+
+async def test_get_session_rejects_flat_shape(client: HermesClient, fake: FakeHermes) -> None:
+    fake.sessions["s"] = {"id": "s", "title": "x"}
+    with pytest.raises(HermesError, match="invalid_shape"):
+        await client.get_session("s")
+
+
+async def test_thinking_run_end_to_end(client: HermesClient, fake: FakeHermes) -> None:
+    """Recorded per-run thinking: answer-only stream, route echoed, reasoning in messages."""
+    run_id = await _start(client, fake, "protocol/think", status="protocol/think.final.json")
+    events = [e async for e in client.stream_events(run_id)]
+    assert [e.event for e in events] == ["message.delta"] * 3 + ["run.completed"]
+    assert "".join(e.data["delta"] for e in events[:-1]) == events[-1].data["output"] == "391"
+    final = await client.get_run(run_id)
+    assert final.runtime is not None
+    route = ThinkingRoute(**final.runtime["requested"])
+    assert route_applied(events[-1].data["runtime"], route)
+    assert route_applied(final.runtime, route)
+
+    msgs_raw = load_json("protocol/think.messages.json")
+    fake.messages[msgs_raw["session_id"]] = msgs_raw
+    msgs = await client.get_session_messages(msgs_raw["session_id"])
+    got = new_reasoning(msgs, set())
+    assert [mid for mid, _ in got] == ["200"]
+    text = got[0][1].thinking_text
+    assert text is not None and text.startswith("The user is asking in Hungarian")
+    assert got[0][1].content == "391"
+
+
+async def test_recorded_deny_flow(client: HermesClient, fake: FakeHermes) -> None:
+    run_id = await _start(client, fake, "protocol/appr", status="protocol/appr.waiting.json")
+    st = await client.get_run(run_id)
+    assert st.status == "waiting_for_approval" and st.approval is not None
+    assert st.approval.command == "rm -r /tmp/delve-fx-dir"
+    deny = load_json("protocol/appr.deny.json")
+    fake.runs[run_id].approvals[st.approval.request_id] = deny
+    resp = await client.respond_approval(run_id, st.approval.request_id, "deny")
+    assert (resp.choice, resp.resolved) == ("deny", 1)
+
+    events = [e async for e in client.stream_events(run_id)]
+    names = [e.event for e in events if e.event != "message.delta"]
+    assert names == [
+        "tool.started", "approval.request", "approval.responded", "tool.completed",
+        "run.completed",
+    ]  # fmt: skip
+    done = next(e for e in events if e.event == "tool.completed")
+    preview = json.loads(done.data["preview"])
+    assert preview["status"] == "blocked"
+    assert preview["user_summary"] == "You denied this command \u2014 it did not run."
+    assert done.data["error"] is True

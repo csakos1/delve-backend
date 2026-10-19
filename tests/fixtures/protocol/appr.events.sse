@@ -1,0 +1,167 @@
+: open
+
+: keepalive
+
+: keepalive
+
+id: 0
+data: {"event": "tool.started", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421460.646904, "tool": "terminal", "preview": "rm -r /tmp/delve-fx-dir", "seq": 0}
+
+id: 1
+data: {"command": "rm -r /tmp/delve-fx-dir", "pattern_key": "delete in root path", "pattern_keys": ["delete in root path"], "description": "delete in root path", "allow_permanent": true, "allow_session": true, "request_id": "684e67f0f9b74346b27fefc792b9fc56", "event": "approval.request", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421460.7396185, "choices": ["once", "session", "always", "deny"], "seq": 1}
+
+id: 2
+data: {"event": "approval.responded", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.0683928, "choice": "deny", "request_id": "684e67f0f9b74346b27fefc792b9fc56", "resolved": 1, "seq": 2}
+
+id: 3
+data: {"event": "tool.completed", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.069272, "tool": "terminal", "duration": 0.42, "error": true, "preview": "{\"output\": \"\", \"exit_code\": -1, \"error\": \"BLOCKED: Command denied by user. The user has NOT consented to this action. Do NOT retry this command, do NOT rephrase it, and do NOT attempt the same outcome via a different command. Stop the current workflow and wait for the user to respond before taking any further destructive or irreversible action.\", \"status\": \"blocked\", \"user_summary\": \"You denied this command \u2014 it did not run.\"}", "seq": 3}
+
+id: 4
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.3817103, "delta": "\n\nA", "seq": 4}
+
+id: 5
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.4347215, "delta": " par", "seq": 5}
+
+id: 6
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.486991, "delta": "anc", "seq": 6}
+
+id: 7
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.537371, "delta": "s", "seq": 7}
+
+id: 8
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.5884342, "delta": " (`", "seq": 8}
+
+id: 9
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.6388912, "delta": "rm", "seq": 9}
+
+id: 10
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.689631, "delta": " -", "seq": 10}
+
+id: 11
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.790449, "delta": "r", "seq": 11}
+
+id: 12
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.7906468, "delta": " /", "seq": 12}
+
+id: 13
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.840961, "delta": "tmp", "seq": 13}
+
+id: 14
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.8915124, "delta": "/d", "seq": 14}
+
+id: 15
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.9420633, "delta": "elve", "seq": 15}
+
+id: 16
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421461.9929874, "delta": "-f", "seq": 16}
+
+id: 17
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.043442, "delta": "x", "seq": 17}
+
+id: 18
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.094578, "delta": "-dir", "seq": 18}
+
+id: 19
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.1450353, "delta": "`)", "seq": 19}
+
+id: 20
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.1956394, "delta": " el", "seq": 20}
+
+id: 21
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.246154, "delta": "utas", "seq": 21}
+
+id: 22
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.2967489, "delta": "\u00edt", "seq": 22}
+
+id: 23
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.3477879, "delta": "va", "seq": 23}
+
+id: 24
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.3984601, "delta": " lett", "seq": 24}
+
+id: 25
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.4488657, "delta": ",", "seq": 25}
+
+id: 26
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.4993262, "delta": " nem", "seq": 26}
+
+id: 27
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.5498412, "delta": " fut", "seq": 27}
+
+id: 28
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.6003659, "delta": "ott", "seq": 28}
+
+id: 29
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.6512806, "delta": " le", "seq": 29}
+
+id: 30
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.7017083, "delta": ".", "seq": 30}
+
+id: 31
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.7521102, "delta": " Meg", "seq": 31}
+
+id: 32
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.8027174, "delta": "\u00e1ll", "seq": 32}
+
+id: 33
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.8531888, "delta": "tam", "seq": 33}
+
+id: 34
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.9036534, "delta": ",", "seq": 34}
+
+id: 35
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421462.9540915, "delta": " nem", "seq": 35}
+
+id: 36
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.0045512, "delta": " pr\u00f3b", "seq": 36}
+
+id: 37
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.0550292, "delta": "\u00e1l", "seq": 37}
+
+id: 38
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.10575, "delta": "om", "seq": 38}
+
+id: 39
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.1563804, "delta": " \u00fajra", "seq": 39}
+
+id: 40
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.2072062, "delta": ",", "seq": 40}
+
+id: 41
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.257596, "delta": " \u00e9s", "seq": 41}
+
+id: 42
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.308072, "delta": " nem", "seq": 42}
+
+id: 43
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.3585305, "delta": " csin", "seq": 43}
+
+id: 44
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.4090075, "delta": "\u00e1lt", "seq": 44}
+
+id: 45
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.459457, "delta": "am", "seq": 45}
+
+id: 46
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.5099003, "delta": " sem", "seq": 46}
+
+id: 47
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.5603313, "delta": "mit", "seq": 47}
+
+id: 48
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.6107652, "delta": " m\u00e1", "seq": 48}
+
+id: 49
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.6612086, "delta": "st", "seq": 49}
+
+id: 50
+data: {"event": "message.delta", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.7121964, "delta": ".", "seq": 50}
+
+id: 51
+data: {"event": "reasoning.available", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.7681782, "text": "A parancs (`rm -r /tmp/delve-fx-dir`) elutas\u00edtva lett, nem futott le. Meg\u00e1lltam, nem pr\u00f3b\u00e1lom \u00fajra, \u00e9s nem csin\u00e1ltam semmit m\u00e1st.", "seq": 51}
+
+id: 52
+data: {"event": "run.completed", "run_id": "run_dda80bc3102f44ca98c32fc4760feab7", "timestamp": 1792421463.7797666, "output": "A parancs (`rm -r /tmp/delve-fx-dir`) elutas\u00edtva lett, nem futott le. Meg\u00e1lltam, nem pr\u00f3b\u00e1lom \u00fajra, \u00e9s nem csin\u00e1ltam semmit m\u00e1st.", "usage": {"input_tokens": 17327, "output_tokens": 83, "total_tokens": 17410, "cache_read_tokens": 17164, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "global"}, "completed": true, "partial": false, "interrupted": false, "seq": 52}
+
+: stream closed
+

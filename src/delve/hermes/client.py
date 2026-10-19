@@ -99,6 +99,23 @@ def build_run_body(
     return body
 
 
+def route_applied(runtime: Mapping[str, Any] | None, route: ThinkingRoute) -> bool:
+    """True if a finished run used the per-run thinking route.
+
+    Hermes reports it in `run.completed.runtime` (and `GET /v1/runs/{id}`):
+    `route_source: "raw_request"` plus `requested: {provider, model}`. A thinking run
+    without it means the route was ignored, e.g. after a Hermes update.
+    """
+    if not runtime or runtime.get("route_source") != "raw_request":
+        return False
+    requested = runtime.get("requested")
+    return (
+        isinstance(requested, Mapping)
+        and requested.get("provider") == route.provider
+        and requested.get("model") == route.model
+    )
+
+
 def capability_problems(
     capabilities: Mapping[str, Any], health: Health, expected_version: str
 ) -> list[str]:
@@ -264,7 +281,10 @@ class HermesClient:
         return data if isinstance(data, dict) else None
 
     async def get_session(self, session_id: str) -> SessionInfo:
-        return SessionInfo.model_validate(await self._request("GET", f"/api/sessions/{session_id}"))
+        data = await self._request("GET", f"/api/sessions/{session_id}")
+        if not isinstance(data, dict) or not isinstance(data.get("session"), dict):
+            raise HermesError(200, "invalid_shape", "session response has no session object")
+        return SessionInfo.model_validate(data["session"])
 
     async def get_session_messages(
         self, session_id: str, *, limit: int = 500

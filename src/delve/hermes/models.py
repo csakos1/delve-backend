@@ -75,8 +75,17 @@ class ApprovalResponse(_Model):
 
 
 class SessionInfo(_Model):
-    id: str | None = None
+    """`GET /api/sessions/{id}` metadata (Hermes wraps it in `{"session": {...}}`)."""
+
+    id: str
     title: str | None = None
+    message_count: int | None = None
+    tool_call_count: int | None = None
+    api_call_count: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    started_at: float | None = None
 
 
 class SessionMessage(_Model):

@@ -1,0 +1,21 @@
+: open
+
+: keepalive
+
+id: 0
+data: {"event": "message.delta", "run_id": "run_18d88e7bdde94285ac00e902d3aa07c4", "timestamp": 1792421437.2105653, "delta": "3", "seq": 0}
+
+id: 1
+data: {"event": "message.delta", "run_id": "run_18d88e7bdde94285ac00e902d3aa07c4", "timestamp": 1792421437.2610419, "delta": "9", "seq": 1}
+
+id: 2
+data: {"event": "message.delta", "run_id": "run_18d88e7bdde94285ac00e902d3aa07c4", "timestamp": 1792421437.311625, "delta": "1", "seq": 2}
+
+id: 3
+data: {"event": "reasoning.available", "run_id": "run_18d88e7bdde94285ac00e902d3aa07c4", "timestamp": 1792421437.3854578, "text": "391", "seq": 3}
+
+id: 4
+data: {"event": "run.completed", "run_id": "run_18d88e7bdde94285ac00e902d3aa07c4", "timestamp": 1792421437.4121864, "output": "391", "usage": {"input_tokens": 8617, "output_tokens": 221, "total_tokens": 8838, "cache_read_tokens": 8613, "cache_write_tokens": 0}, "runtime": {"provider": "custom", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf", "route_source": "raw_request", "requested": {"provider": "custom:llama-qwen38-think", "model": "/home/operator/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf"}}, "completed": true, "partial": false, "interrupted": false, "seq": 4}
+
+: stream closed
+

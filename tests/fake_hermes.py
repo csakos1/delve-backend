@@ -20,47 +20,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 API_KEY = "fake-key"
 
-# Not recorded yet: shape follows delve-infra docs/protocol.md (flags at top level).
-SYNTHETIC_CAPABILITIES: dict[str, Any] = {
-    "object": "hermes.capabilities",
-    "runtime": {"mode": "server_agent", "tool_execution": "server"},
-    **{
-        name: True
-        for name in (
-            "run_submission",
-            "run_status",
-            "run_events_sse",
-            "run_stop",
-            "run_steer",
-            "run_approval_response",
-            "tool_progress_events",
-            "approval_events",
-            "session_chat",
-            "session_model_lock",
-            "reasoning_streaming",
-        )
-    },
-    "runs_idempotency": {"supported": True, "durable": True, "retention_seconds": 86400},
-    "jobs_admin": False,
-    "audio_api": False,
-}
-
-SYNTHETIC_TOOLSETS: dict[str, Any] = {
-    "object": "list",
-    "platform": "api_server",
-    "data": [
-        {"name": "terminal", "enabled": True, "configured": True,
-         "tools": ["process_manage", "terminal"]},
-        {"name": "file", "enabled": True, "configured": True,
-         "tools": ["patch", "read_file", "search_files", "write_file"]},
-        {"name": "vision", "enabled": True, "configured": True, "tools": ["vision_analyze"]},
-        {"name": "skills", "enabled": True, "configured": True,
-         "tools": ["skill_manage", "skill_view", "skills_list"]},
-        {"name": "agentcards", "enabled": True, "configured": True,
-         "tools": ["publish_water_card"]},
-    ],
-}  # fmt: skip
-
 
 def load_json(rel: str) -> Any:
     return json.loads((FIXTURES / rel).read_text(encoding="utf-8"))
@@ -119,8 +78,8 @@ class FakeHermes:
     def __init__(self, *, version: str = "0.22.2", chunk_size: int = 7) -> None:
         self.version = version
         self.chunk_size = chunk_size
-        self.capabilities: dict[str, Any] = dict(SYNTHETIC_CAPABILITIES)
-        self.toolsets: dict[str, Any] = SYNTHETIC_TOOLSETS
+        self.capabilities: dict[str, Any] = load_json("protocol/capabilities.json")
+        self.toolsets: dict[str, Any] = load_json("toolsets/toolsets.json")
         self.queue: list[Scenario] = []
         self.runs: dict[str, Scenario] = {}
         self.idempotency: dict[str, tuple[str, str]] = {}  # key -> (body json, run_id)
@@ -177,7 +136,7 @@ class FakeHermes:
 
         @app.get("/health")
         async def health() -> dict[str, Any]:
-            return {"status": "ok", "platform": "hermes-agent", "version": fake.version}
+            return {**load_json("protocol/health.json"), "version": fake.version}
 
         @app.get("/v1/capabilities")
         async def capabilities() -> dict[str, Any]:
