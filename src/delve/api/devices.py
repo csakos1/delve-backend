@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.rest import Device
-from delve.auth import FCM_TOKEN_MAX, redeem_pairing_code, set_fcm_token
+from delve.auth import FCM_TOKEN_MAX, redeem_pairing_code, revoke_device, set_fcm_token
 from delve.db.models import Device as DeviceRow
 from delve.serialize import iso
 from delve.status import snapshot
@@ -108,6 +108,16 @@ async def put_fcm(request: Request, device: Device, body: Fcm) -> Response:
     """Store this device's FCM token; `null` clears it."""
     async with _sm(request)() as s:
         await set_fcm_token(s, device.id, body.token)
+        await s.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/devices/me", status_code=204)
+async def unpair(request: Request, device: Device) -> Response:
+    """The app's "Unpair this device": revokes the calling token (and its FCM token).
+    An open WebSocket of the device is not closed; the app closes its own."""
+    async with _sm(request)() as s:
+        await revoke_device(s, device.id)
         await s.commit()
     return Response(status_code=204)
 

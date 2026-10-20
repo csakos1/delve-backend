@@ -187,6 +187,12 @@ async def test_register_me_fcm_status(
     assert st["thinking_route"] is None
     assert client.get("/api/v1/status").status_code == 401
 
+    # unpair: the token stops working at once, a second call is unauthorized
+    assert client.delete("/api/v1/devices/me").status_code == 401
+    assert client.delete("/api/v1/devices/me", headers=auth(tok)).status_code == 204
+    assert client.get("/api/v1/devices/me", headers=auth(tok)).status_code == 401
+    assert client.delete("/api/v1/devices/me", headers=auth(tok)).status_code == 401
+
 
 @pytest.mark.pg
 async def test_register_rate_limit(

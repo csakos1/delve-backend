@@ -110,6 +110,7 @@ needs `Authorization: Bearer <device token>`.
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
 | `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm}` |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
+| `DELETE` | `/api/v1/devices/me` | unpair: revokes the calling token (and its FCM token) → 204 |
 | `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
 | `GET` | `/api/v1/conversations?limit=&cursor=&archived=` | newest first, keyset cursor |
 | `GET` | `/api/v1/conversations/{id}` | one conversation |

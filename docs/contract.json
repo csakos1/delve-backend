@@ -1,5 +1,5 @@
 {
-  "api_revision": 1,
+  "api_revision": 2,
   "rest": [
     {
       "method": "GET",
@@ -47,6 +47,11 @@
       "query": [
         "limit"
       ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/devices/me",
+      "query": []
     },
     {
       "method": "GET",
