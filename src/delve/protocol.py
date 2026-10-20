@@ -13,7 +13,7 @@ from collections.abc import Mapping
 STRICT = False
 
 _CONVERSATION = frozenset(
-    {"id", "title", "created_at", "updated_at", "archived", "thinking", "origin",
+    {"id", "title", "preview", "created_at", "updated_at", "archived", "thinking", "origin",
      "last_run_id", "context", "totals"}
 )  # fmt: skip
 _APPROVAL = frozenset(

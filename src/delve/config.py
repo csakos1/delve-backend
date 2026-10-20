@@ -59,6 +59,16 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8080", validation_alias=_env("LLAMA_BASE_URL")
     )
 
+    # --- push (FCM HTTP v1; off without a service account key) ---
+    fcm_service_account_file: Path | None = Field(
+        default=None, validation_alias=_env("FCM_SERVICE_ACCOUNT_FILE")
+    )
+    # defaults to the key's project_id
+    fcm_project_id: str | None = Field(default=None, validation_alias=_env("FCM_PROJECT_ID"))
+    push_run_done_min_s: Annotated[float, Field(ge=0)] = Field(
+        default=20.0, validation_alias=_env("PUSH_RUN_DONE_MIN_S")
+    )
+
     # --- local files ---
     cards_path: Path = Field(
         default=Path("/run/delve/cards/events.jsonl"), validation_alias=_env("DELVE_CARDS_PATH")

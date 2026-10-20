@@ -20,6 +20,7 @@ from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
 from delve.llama import LlamaClient
+from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
 
@@ -33,8 +34,10 @@ def create_app(
     llama_transport: httpx.AsyncBaseTransport | None = None,
     run_worker: bool = True,
     timing: Timing | None = None,
+    push_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    """`hermes_transport`, `llama_transport`, `run_worker` and `timing` exist for tests."""
+    """`hermes_transport`, `llama_transport`, `run_worker`, `timing` and `push_transport`
+    exist for tests."""
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -61,13 +64,28 @@ def create_app(
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
         app.state.approvals = ApprovalService(sessionmaker, hermes, hub, manager)
+        push = build_push(
+            sessionmaker,
+            app.state.presence,
+            service_account_file=settings.fcm_service_account_file,
+            project_id=settings.fcm_project_id,
+            run_done_min_s=settings.push_run_done_min_s,
+            transport=push_transport,
+        )
+        hub.add_listener(push.listener)
+        app.state.push = push
+        await push.start()
         if run_worker:
             await manager.start()
-        log.info("startup", extra={"version": __version__, "bind": settings.bind})
+        log.info(
+            "startup",
+            extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
+        )
         try:
             yield
         finally:
             await manager.close()
+            await push.close()
             await hermes.aclose()
             await llama.aclose()
             await engine.dispose()
@@ -83,6 +101,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.pairing_limiter = devices.FailureLimiter()
+    app.state.presence = Presence()
     app.include_router(rest.router)
     app.include_router(devices.router)
     app.include_router(ws.router)

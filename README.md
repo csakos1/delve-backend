@@ -29,6 +29,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 5 | Approval expiry, late approval, reconciliation after a gateway restart | done |
 | 6 | Token totals, context fill, per-run throughput | done |
 | 7 | Pairing with a one-time code, FCM token, status for the app | done |
+| 8 | Push notifications (FCM), per-device notification settings, list preview | done |
 
 ## Development
 
@@ -108,7 +109,8 @@ needs `Authorization: Bearer <device token>`.
 | Method | Path | |
 |---|---|---|
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
-| `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm}` |
+| `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm, push, notify}`; `push`: the server can send pushes |
+| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?}}` (booleans; left-out keys keep their value) → the device |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
 | `DELETE` | `/api/v1/devices/me` | unpair: revokes the calling token (and its FCM token) → 204 |
 | `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
@@ -215,6 +217,30 @@ For a thinking run the value includes the reasoning tokens of the last call.
 text delta; a thinking run reasons first), `context_source`, `llama_calls_seen`, and from
 `/metrics` differences `prompt_tokens` (prefilled, not cached), `predicted_tokens`,
 `prefill_tps`, `gen_tps`. If llama-server cannot be reached, runs carry on without these.
+
+Every conversation also has a `preview`: its latest non-empty user or assistant text,
+whitespace collapsed, at most 200 characters (`null` before the first message).
+
+### Push notifications
+
+With `FCM_SERVICE_ACCOUNT_FILE` (a Firebase service account key, `/etc/delve/fcm.json`,
+`root:delve 0640`) the backend sends FCM HTTP v1 **data messages**; the app builds the
+notification. Without it pushing is off and `GET /devices/me` says `push: false`. The unit
+needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.conf`).
+
+| `kind` | Fields (all strings) | Sent |
+|---|---|---|
+| `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
+| `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
+| `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | to devices **without a live WebSocket**, for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always) |
+
+`title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
+before it is pushed (a follow-up run's approval is answered automatically within
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`; `water`, `brief`
+for later card kinds); revoked devices and devices without an FCM token get nothing. A
+socket counts as live while a frame arrived from it within 60 s (the app pings). An
+`UNREGISTERED` answer clears the device's FCM token; 429/5xx are retried 3 times. Every
+send is logged in `push_log`.
 
 ## Pre-commit hook
 

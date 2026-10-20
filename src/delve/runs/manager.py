@@ -57,6 +57,7 @@ from delve.serialize import (
     approval_out,
     conversation_out,
     message_out,
+    preview_text,
     step_out,
 )
 
@@ -227,6 +228,7 @@ class RunManager:
                 conv = found
                 conv.archived = False
                 conv.updated_at = now()
+            conv.preview = preview_text(text) or conv.preview
             await s.flush()
             run_id = f"q_{uuid.uuid4().hex}"
             msg = Message(
@@ -1007,6 +1009,7 @@ class RunManager:
                 open_approvals += await late.settle_followup(s, ctx.run_id, status)
             conv = _must(await s.get(Conversation, ctx.conversation_id))
             conv.updated_at = now()
+            conv.preview = preview_text(content) or conv.preview
             conv.tokens_in += _int(usage, "input_tokens")
             conv.tokens_out += _int(usage, "output_tokens")
             conv.tokens_cache_read += _int(usage, "cache_read_tokens")

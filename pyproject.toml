@@ -18,6 +18,7 @@ dependencies = [
   "asyncpg>=0.30",
   "alembic>=1.14",
   "httpx>=0.28",
+  "cryptography>=43",  # RS256 for the FCM service account (push.py)
   "websockets>=14",  # uvicorn's WebSocket implementation
 ]
 

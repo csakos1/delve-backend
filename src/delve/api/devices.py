@@ -11,12 +11,19 @@ from collections import deque
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.rest import Device
-from delve.auth import FCM_TOKEN_MAX, redeem_pairing_code, revoke_device, set_fcm_token
+from delve.auth import (
+    FCM_TOKEN_MAX,
+    DeviceIdentity,
+    redeem_pairing_code,
+    revoke_device,
+    set_fcm_token,
+)
 from delve.db.models import Device as DeviceRow
+from delve.push import PushService, notify_settings
 from delve.serialize import iso
 from delve.status import snapshot
 
@@ -82,19 +89,58 @@ async def register(request: Request, body: Register) -> dict[str, Any]:
     return {"device_id": str(device.id), "name": device.name, "token": token}
 
 
-@router.get("/devices/me")
-async def me(request: Request, device: Device) -> dict[str, Any]:
-    async with _sm(request)() as s:
-        row = await s.get(DeviceRow, device.id)
-    if row is None:  # revoked rows stay; a deleted row would have failed authentication
-        raise HTTPException(404, {"code": "device_not_found", "message": "device not found"})
+def _device_out(request: Request, row: DeviceRow) -> dict[str, Any]:
+    push: PushService = request.app.state.push
     return {
         "id": str(row.id),
         "name": row.name,
         "created_at": iso(row.created_at),
         "last_seen_at": iso(row.last_seen_at),
         "fcm": row.fcm_token is not None,
+        "push": push.enabled,  # the server can send pushes (FCM is configured)
+        "notify": notify_settings(row.notify),
     }
+
+
+async def _own_row(s: AsyncSession, device: DeviceIdentity) -> DeviceRow:
+    row = await s.get(DeviceRow, device.id)
+    if row is None:  # revoked rows stay; a deleted row would have failed authentication
+        raise HTTPException(404, {"code": "device_not_found", "message": "device not found"})
+    return row
+
+
+@router.get("/devices/me")
+async def me(request: Request, device: Device) -> dict[str, Any]:
+    async with _sm(request)() as s:
+        row = await _own_row(s, device)
+    return _device_out(request, row)
+
+
+class Notify(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approvals: StrictBool | None = None
+    run_done: StrictBool | None = None
+    water: StrictBool | None = None
+    brief: StrictBool | None = None
+
+
+class DevicePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notify: Notify | None = None
+
+
+@router.patch("/devices/me")
+async def patch_me(request: Request, device: Device, body: DevicePatch) -> dict[str, Any]:
+    """Change this device's notification settings; keys left out keep their value."""
+    async with _sm(request)() as s:
+        row = await _own_row(s, device)
+        if body.notify is not None:
+            changes = body.notify.model_dump(exclude_none=True)
+            row.notify = {**notify_settings(row.notify), **changes}
+            await s.commit()
+    return _device_out(request, row)
 
 
 class Fcm(BaseModel):

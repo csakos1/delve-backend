@@ -58,6 +58,7 @@ class EventHub:
         self._queue_size = queue_size
         self._clock = clock
         self._subs: set[Subscription] = set()
+        self._listeners: list[Callable[[Envelope], None]] = []
 
     @property
     def seq(self) -> int:
@@ -66,6 +67,11 @@ class EventHub:
     @property
     def subscribers(self) -> int:
         return len(self._subs)
+
+    def add_listener(self, fn: Callable[[Envelope], None]) -> None:
+        """Call `fn` with every published event, synchronously (in-process consumers such
+        as push; `fn` must be quick and must not raise)."""
+        self._listeners.append(fn)
 
     def publish(self, type: str, data: dict[str, Any]) -> Envelope:
         if self._validate and (problem := protocol.check_event(type, data)) is not None:
@@ -84,6 +90,11 @@ class EventHub:
                 sub.closed.set()
                 self._subs.discard(sub)
                 log.warning("subscriber overflow", extra={"seq": env.seq})
+        for fn in self._listeners:
+            try:
+                fn(env)
+            except Exception:
+                log.exception("event listener failed", extra={"type": type})
         return env
 
     def subscribe(self) -> Subscription:

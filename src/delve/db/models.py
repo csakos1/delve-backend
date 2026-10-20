@@ -101,6 +101,8 @@ class Conversation(Base):
         BigInteger, nullable=False, server_default=text("0")
     )
     origin: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'app'"))
+    # the latest non-empty user/assistant text, for the chat list (N40, migration 0006)
+    preview: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (CheckConstraint("origin IN ('app','schedule')", name="origin"),)
 
@@ -328,6 +330,14 @@ class Device(Base):
     created_at: Mapped[datetime] = _now()
     last_seen_at: Mapped[datetime | None] = mapped_column(TZ)
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # which pushes this device wants (decision 260); keys: delve.push.NOTIFY_DEFAULTS
+    notify: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text(
+            """'{"approvals": true, "run_done": true, "water": false, "brief": false}'::jsonb"""
+        ),
+    )
 
 
 class PairingCode(Base):

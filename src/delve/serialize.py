@@ -9,6 +9,16 @@ from delve.db.models import Approval, Conversation, Message, Run, ToolStep
 from delve.runs.steps import offered_choices
 
 CONTEXT_WARN_PCT = 75.0  # the app warns above this (plan 7.1)
+PREVIEW_CHARS = 200
+
+
+def preview_text(text: str | None) -> str | None:
+    """A conversation's list preview: whitespace collapsed, at most 200 characters;
+    None for an empty text (the caller keeps the previous preview)."""
+    if not text:
+        return None
+    flat = " ".join(text.split())
+    return flat[:PREVIEW_CHARS] or None
 
 
 def iso(ts: datetime | None) -> str | None:
@@ -22,6 +32,7 @@ def conversation_out(c: Conversation) -> dict[str, Any]:
     return {
         "id": c.id,
         "title": c.title,
+        "preview": c.preview,
         "created_at": iso(c.created_at),
         "updated_at": iso(c.updated_at),
         "archived": c.archived,

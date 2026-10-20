@@ -32,7 +32,7 @@ def shapes() -> dict[str, Any]:
     conv = Conversation(
         id="c", title="t", created_at=_T, updated_at=_T, archived=False, thinking=False,
         origin="app", last_run_id=None, context_tokens=1, context_max=2,
-        context_measured_at=_T, tokens_in=0, tokens_out=0, tokens_cache_read=0,
+        context_measured_at=_T, tokens_in=0, tokens_out=0, tokens_cache_read=0, preview="p",
     )  # fmt: skip
     msg = Message(id=1, conversation_id="c", run_id="r", role="user", content="", created_at=_T)
     run = Run(run_id="r", conversation_id="c", status="queued", thinking=False, origin="app")

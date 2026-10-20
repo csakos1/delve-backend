@@ -16,6 +16,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -26,6 +27,7 @@ from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
 from delve.db.models import Conversation, Message
 from delve.events import EventHub, Subscription
+from delve.push import Presence
 from delve.runs.approvals import ApprovalError, ApprovalService
 from delve.runs.manager import InvalidRequest, NotFound, RunManager
 from delve.serialize import conversation_out
@@ -73,12 +75,18 @@ async def ws_endpoint(ws: WebSocket) -> None:
         return
 
     sub = hub.subscribe()
+    presence: Presence = app.state.presence
+    conn = presence.enter(device.id)
     try:
         watermark = await _handshake(ws, hub, data, app.state)
-        await _session(ws, sub, watermark, device, app.state.run_manager, sm, app.state.approvals)
+        await _session(
+            ws, sub, watermark, device, app.state.run_manager, sm, app.state.approvals,
+            lambda: presence.touch(conn),
+        )  # fmt: skip
     except WebSocketDisconnect:
         pass
     finally:
+        presence.leave(conn)
         hub.unsubscribe(sub)
 
 
@@ -123,6 +131,7 @@ async def _session(
     mgr: RunManager,
     sm: async_sessionmaker[AsyncSession],
     approvals: ApprovalService,
+    touch: Callable[[], None],
 ) -> None:
     async def pump() -> None:
         while True:
@@ -149,6 +158,7 @@ async def _session(
         while True:
             try:
                 frame = await _receive(ws)
+                touch()  # the device is there (push: no "run finished" while live)
             except ProtocolError as exc:
                 await _send(ws, _error(None, exc.code, exc.message))
                 continue
