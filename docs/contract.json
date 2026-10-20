@@ -1,5 +1,5 @@
 {
-  "api_revision": 3,
+  "api_revision": 4,
   "rest": [
     {
       "method": "GET",
@@ -13,6 +13,15 @@
       "method": "POST",
       "path": "/api/v1/approvals/{request_id}",
       "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/cards",
+      "query": [
+        "limit",
+        "since",
+        "type"
+      ]
     },
     {
       "method": "GET",
@@ -194,6 +203,16 @@
       "status": true,
       "tool": true,
       "user_summary": true
+    },
+    "card": {
+      "id": true,
+      "origin": true,
+      "payload": "object",
+      "received_at": true,
+      "session_id": true,
+      "severity": true,
+      "ts": true,
+      "type": true
     }
   },
   "ws": {
@@ -287,6 +306,16 @@
         "responded_at",
         "run_id",
         "status"
+      ],
+      "card.new": [
+        "id",
+        "origin",
+        "payload",
+        "received_at",
+        "session_id",
+        "severity",
+        "ts",
+        "type"
       ],
       "context.updated": [
         "conversation_id",

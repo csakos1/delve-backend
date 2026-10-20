@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     cards_path: Path = Field(
         default=Path("/run/delve/cards/events.jsonl"), validation_alias=_env("DELVE_CARDS_PATH")
     )
+    cards_poll_s: Annotated[float, Field(gt=0)] = Field(
+        default=2.0, validation_alias=_env("DELVE_CARDS_POLL_S")
+    )
     inbox_dir: Path = Field(
         default=Path("/var/lib/delve-inbox"), validation_alias=_env("DELVE_INBOX_DIR")
     )

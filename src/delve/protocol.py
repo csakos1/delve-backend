@@ -22,6 +22,10 @@ _APPROVAL = frozenset(
      "hermes_deadline", "expires_at", "responded_at"}
 )  # fmt: skip
 
+_CARD = frozenset(
+    {"id", "type", "severity", "ts", "origin", "session_id", "payload", "received_at"}
+)
+
 _CONTEXT = frozenset(
     {"conversation_id", "run_id", "tokens", "max", "pct", "warn", "source", "measured_at",
      "final"}
@@ -46,6 +50,7 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     "reasoning.final": frozenset({"conversation_id", "run_id", "message_id", "text"}),
     "context.updated": _CONTEXT,
     "health.status": frozenset({"hermes", "hermes_version"}),
+    "card.new": _CARD,
     "error": frozenset({"code", "message", "ref_id"}),
 }
 

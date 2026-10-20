@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from delve import API_REVISION, REVISION, __version__
 from delve.api import devices, rest, ws
+from delve.cards.ingest import CardIngester
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
@@ -75,8 +76,13 @@ def create_app(
         hub.add_listener(push.listener)
         app.state.push = push
         await push.start()
+        ingester = CardIngester(
+            sessionmaker, hub, settings.cards_path, poll_s=settings.cards_poll_s
+        )
+        app.state.card_ingester = ingester
         if run_worker:
             await manager.start()
+            await ingester.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -84,6 +90,7 @@ def create_app(
         try:
             yield
         finally:
+            await ingester.close()
             await manager.close()
             await push.close()
             await hermes.aclose()

@@ -14,8 +14,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from delve import API_REVISION, protocol
-from delve.db.models import Approval, Conversation, Message, Run, ToolStep
-from delve.serialize import approval_out, conversation_out, message_out, run_out, step_out
+from delve.db.models import Approval, Card, Conversation, Message, Run, ToolStep
+from delve.serialize import (
+    approval_out,
+    card_out,
+    conversation_out,
+    message_out,
+    run_out,
+    step_out,
+)
 
 _T = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -39,6 +46,8 @@ def shapes() -> dict[str, Any]:
     appr = Approval(request_id="a", run_id="r", conversation_id="c", command="", status="pending",
                     action_class="other", created_at=_T)  # fmt: skip
     step = ToolStep(id=1, run_id="r", tool="terminal", status="running")
+    card = Card(id="k", v=1, type="water", severity="info", ts=_T, origin="script",
+                payload={}, received_at=_T)  # fmt: skip
     return {
         "conversation": _keys(conversation_out(conv)),
         "message": _keys(message_out(msg)),
@@ -46,6 +55,8 @@ def shapes() -> dict[str, Any]:
         "open_run": _keys({**run_out(run), "position": 0}),
         "approval": _keys(approval_out(appr)),
         "tool_step": {**_keys(step_out(step)), "approval": "approval|null"},
+        # payload: per type, plan 5 (water: station, level_cm, measured_at, …)
+        "card": {**_keys(card_out(card)), "payload": "object"},
     }
 
 

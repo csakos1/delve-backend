@@ -30,6 +30,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 6 | Token totals, context fill, per-run throughput | done |
 | 7 | Pairing with a one-time code, FCM token, status for the app | done |
 | 8 | Push notifications (FCM), per-device notification settings, list preview | done |
+| 9 | Card ingest from the agent's `events.jsonl`, `GET /cards`, `card.new`, water-level push | done |
 
 ## Development
 
@@ -121,6 +122,7 @@ needs `Authorization: Bearer <device token>`.
 | `PATCH` | `/api/v1/conversations/{id}` | `{thinking?, archived?}` |
 | `GET` | `/api/v1/approvals?status=pending,expired_in_hermes` | approval inbox |
 | `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
+| `GET` | `/api/v1/cards?type=&since=&limit=` | cards newest first (`ts`); `since` with a timezone |
 | `GET` | `/api/v1/runs/open` | the queue: active run first, then queued ones; each with `position` (runs ahead) |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
@@ -150,7 +152,7 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
-`health.status`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`health.status`, `card.new`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -221,6 +223,20 @@ text delta; a thinking run reasons first), `context_source`, `llama_calls_seen`,
 Every conversation also has a `preview`: its latest non-empty user or assistant text,
 whitespace collapsed, at most 200 characters (`null` before the first message).
 
+### Cards
+
+The agent's `agentcards` plugin and its no-agent scripts append cards to
+`~agent/.hermes/cards/events.jsonl` (format: delve-infra, plan 5). The unit sees the
+directory read-only at `/run/delve/cards` (delve-infra drop-in `cards.conf`, a bind mount;
+the file is world-readable inside the agent's `0700` home). Every `DELVE_CARDS_POLL_S`
+(2 s) the ingester reads the new complete lines from its stored offset
+(`card_ingest_offsets`), checks each with the plugin's own validator
+(`delve/cards/schemas.py`, vendored) and inserts the valid ones (`ON CONFLICT DO
+NOTHING` on the card id) in one transaction with the new offset. A new card is published
+as `card.new` (the `card` shape). A shorter file or a new inode starts over from 0; invalid
+lines are logged and skipped. History is ingested too (the payload's time bounds are taken
+relative to the card's own `ts`).
+
 ### Push notifications
 
 With `FCM_SERVICE_ACCOUNT_FILE` (a Firebase service account key, `/etc/delve/fcm.json`,
@@ -232,6 +248,7 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 |---|---|---|
 | `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
 | `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
+| `card` | `card_id, type, severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; collapse key `water` |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | to devices **without a live WebSocket**, for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always) |
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s

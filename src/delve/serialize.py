@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from delve.db.models import Approval, Conversation, Message, Run, ToolStep
+from delve.db.models import Approval, Card, Conversation, Message, Run, ToolStep
 from delve.runs.steps import offered_choices
 
 CONTEXT_WARN_PCT = 75.0  # the app warns above this (plan 7.1)
@@ -121,4 +121,17 @@ def step_out(t: ToolStep, approval: Approval | None = None) -> dict[str, Any]:
         "seq_completed": t.seq_completed,
         "approval_request_id": t.approval_request_id,
         "approval": approval_out(approval) if approval is not None else None,
+    }
+
+
+def card_out(c: Card) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "type": c.type,
+        "severity": c.severity,
+        "ts": iso(c.ts),
+        "origin": c.origin,
+        "session_id": c.session_id,
+        "payload": c.payload,
+        "received_at": iso(c.received_at),
     }

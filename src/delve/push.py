@@ -14,6 +14,9 @@ Kinds (every value is a string, as FCM requires):
 * `run_done` - `conversation_id, run_id, title, status` (`completed` or `failed`),
   `preview` (the answer's first 120 characters). Only to devices without a live WebSocket,
   and only for runs of at least `PUSH_RUN_DONE_MIN_S` seconds (scheduled runs always).
+* `card` - a new water-level card from the scheduled script: `card_id, type, severity,
+  station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at`
+  (empty when unknown). Not for cards older than an hour (history on first ingest).
 
 Who gets what is per device (`devices.notify`, `PATCH /api/v1/devices/me`). An
 `UNREGISTERED` answer clears the device's FCM token. Every send is logged in `push_log`.
@@ -42,7 +45,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delve.db.models import Approval, Conversation, Device, Message, PushLog, Run
+from delve.db.models import Approval, Card, Conversation, Device, Message, PushLog, Run
 from delve.events import Envelope
 
 log = logging.getLogger("delve.push")
@@ -61,6 +64,17 @@ FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 MAX_TTL_S = 28 * 24 * 3600  # FCM's limit
 RESOLVED_TTL_S = 24 * 3600
 RUN_DONE_TTL_S = 6 * 3600
+CARD_TTL_S = 12 * 3600
+# a card read from history (first ingest, a replaced file) is not news
+CARD_PUSH_MAX_AGE_S = 3600
+WATER_PUSH_FIELDS = (
+    "station",
+    "level_cm",
+    "lake_avg_cm",
+    "trend_cm_24h",
+    "lake_avg_trend_cm_24h",
+    "measured_at",
+)
 
 
 def notify_settings(raw: Mapping[str, Any] | None) -> dict[str, bool]:
@@ -356,6 +370,8 @@ class PushService:
             self._queue.put_nowait(_Job("approval", str(env.data["request_id"])))
         elif env.type == "run.finished":
             self._queue.put_nowait(_Job("run", str(env.data["run_id"])))
+        elif env.type == "card.new" and _card_worth_a_push(env.data):
+            self._queue.put_nowait(_Job("card", str(env.data["id"])))
 
     async def start(self) -> None:
         if self.enabled and self._task is None:
@@ -382,6 +398,8 @@ class PushService:
                     await asyncio.sleep(job.delay_s)
                 if job.kind == "approval":
                     await self._approval(job.ref)
+                elif job.kind == "card":
+                    await self._card(job.ref)
                 else:
                     await self._run_done(job.ref)
             except asyncio.CancelledError:
@@ -464,6 +482,24 @@ class PushService:
             collapse_key=None, skip_live=True,
         )  # fmt: skip
 
+    async def _card(self, card_id: str) -> None:
+        async with self._sm() as s:
+            card = await s.get(Card, card_id)
+        if card is None or card.type != "water":
+            return
+        p = card.payload or {}
+        data = {
+            "kind": "card",
+            "card_id": card.id,
+            "type": card.type,
+            "severity": card.severity,
+            **{k: _text(p.get(k)) for k in WATER_PUSH_FIELDS},
+        }
+        await self._send(
+            "water", "card", card_id, data, high=False, ttl_s=CARD_TTL_S,
+            collapse_key="water",
+        )  # fmt: skip
+
     async def _send(
         self,
         setting: str,
@@ -544,6 +580,25 @@ async def _title(s: AsyncSession, conversation_id: str) -> str:
         )
     ).scalar_one_or_none()
     return clip(first, 80)
+
+
+def _card_worth_a_push(card: Mapping[str, Any]) -> bool:
+    """Water level after each scheduled reading (the cron script), when it is new."""
+    if card.get("type") != "water" or card.get("origin") != "script":
+        return False
+    try:
+        ts = datetime.fromisoformat(str(card.get("ts")))
+    except ValueError:
+        return False
+    return (datetime.now(UTC) - ts).total_seconds() <= CARD_PUSH_MAX_AGE_S
+
+
+def _text(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
 
 
 def _iso(ts: datetime | None) -> str:

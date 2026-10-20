@@ -18,10 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
 from delve.auth import DeviceIdentity, authenticate
-from delve.db.models import TERMINAL_RUN_STATUSES, Conversation, Message, Run
+from delve.db.models import TERMINAL_RUN_STATUSES, Card, Conversation, Message, Run
 from delve.runs.approvals import DEFAULT_LIST_STATUSES, ApprovalError, ApprovalService
 from delve.runs.manager import NotFound, RunManager
-from delve.serialize import conversation_out, run_out
+from delve.serialize import card_out, conversation_out, run_out
 
 
 def _sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -223,6 +223,28 @@ async def answer_approval(
         return await _approvals(request).respond(request_id, body.choice, device.name)
     except ApprovalError as exc:
         raise HTTPException(exc.http_status, {"code": exc.code, "message": exc.message}) from exc
+
+
+@router.get("/cards")
+async def list_cards(
+    request: Request,
+    _device: Device,
+    type: str | None = None,  # the query parameter's name
+    since: datetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """Cards newest first (`ts`), optionally of one type and from `since` on."""
+    if since is not None and since.tzinfo is None:
+        raise HTTPException(400, {"code": "invalid_since", "message": "since needs a timezone"})
+    q = select(Card)
+    if type is not None:
+        q = q.where(Card.type == type)
+    if since is not None:
+        q = q.where(Card.ts >= since)
+    q = q.order_by(Card.ts.desc(), Card.id.desc()).limit(limit)
+    async with _sessionmaker(request)() as s:
+        rows = (await s.execute(q)).scalars().all()
+    return {"data": [card_out(c) for c in rows]}
 
 
 def _not_found(what: str) -> HTTPException:
