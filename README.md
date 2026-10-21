@@ -33,6 +33,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 9 | Card ingest from the agent's `events.jsonl`, `GET /cards`, `card.new`, water-level push | done |
 | 10 | System view (Hermes, llama-server, GPUs, queue), llama-server stop/start with a held queue | done |
 | 11 | Schedules (cron, catch-up, run now) and the morning brief card; brief push | done |
+| 12 | Observability: run, approval and token series, GPU sampling, retention cleanup | done |
 
 ## Development
 
@@ -133,6 +134,7 @@ needs `Authorization: Bearer <device token>`.
 | `PATCH` | `/api/v1/schedules/{id}` | any of the fields above → `schedule`; the brief takes only `cron` and `enabled` (422 `brief_fields`) |
 | `DELETE` | `/api/v1/schedules/{id}` | → 204; the brief: 409 `brief_fixed` |
 | `POST` | `/api/v1/schedules/{id}/run` | fire once now (timing unchanged) → `{schedule, run_id, card_id}` |
+| `GET` | `/api/v1/stats?range=24h\|7d\|30d` | the Observability view (below); 422 for another range |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -314,6 +316,32 @@ from the helper (`host.status`, `agent.incidents`; an incident is open until ack
 most 36 h old), the states from the system view. A source that cannot be read is `null`
 and named in `missing`. `severity`: `alert` (llama-server failed/down or Hermes down),
 `warn` (open incidents or something missing), else `info`.
+
+### Observability
+
+`GET /api/v1/stats?range=` (`24h` default, `7d`, `30d`) answers the app's Observability
+screen. Buckets are in **Europe/Budapest** and the last one holds the current moment:
+hours for `24h` (24), six hours at 00/06/12/18 for `7d` (28), days for `30d` (30, a DST day
+is 23 or 25 hours); `from`/`to` are the outer edges, `bucket_s` the nominal size. Every
+series is `{value, points: [{t, v}]}`, one point per bucket starting at `t`, `v: null`
+where there is no data.
+
+| Key | `points` | `value` |
+|---|---|---|
+| `generation` | mean `perf.gen_tps` of the completed runs that ended in the bucket | the newest such run's |
+| `prefill` | mean `perf.prefill_tps`, only runs with `perf.prompt_tokens ≥ prefill_min_prompt_tokens` (500) | the newest such run's |
+| `queue` | the most runs waiting at once (queued → started, or ended without starting) | queued now |
+| `approval_latency` | median seconds from the request to the answer, by answer time; automatic late approvals are left out | median over the range |
+| `cache_hit` | `Σ cache_read_tokens / Σ input_tokens` in %, completed runs | the same over the range |
+| `tokens_per_day` | `days: [{date, tokens}]`, local days (7, or 30 for `30d`), `usage.total_tokens` of every run that ended that day | today's |
+| `gpus[]` | `{index, name, temp, power}`: mean °C / W per GPU bucket (`gpu_bucket_s`: 10 min, 1 h, 6 h) | the newest sample |
+
+The GPU series come from `gpu_samples`: every `DELVE_STATS_SAMPLE_S` (60 s; 0 turns it off)
+the backend asks the helper for `gpu.status` and stores temperature, power, utilisation
+and memory per GPU. `sampling` = `{interval_s, ok, error, last_at}` says whether that works
+(a failure is logged once per kind). Once an hour the same loop deletes samples older than
+`DELVE_GPU_RETENTION_DAYS` (30) and `push_log` rows older than
+`DELVE_PUSH_LOG_RETENTION_DAYS` (90). Runs, approvals and messages are kept.
 
 ### Push notifications
 

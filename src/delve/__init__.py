@@ -12,7 +12,7 @@ except PackageNotFoundError:  # running from a source tree without installation
 
 # The app-facing contract (docs/contract.json). Bumped on every change a client can see;
 # additive changes keep old clients working, so the app checks `api_revision >= N`.
-API_REVISION = 6
+API_REVISION = 7
 
 
 def _read_revision() -> str | None:

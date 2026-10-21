@@ -1,5 +1,5 @@
 {
-  "api_revision": 6,
+  "api_revision": 7,
   "rest": [
     {
       "method": "GET",
@@ -121,6 +121,13 @@
       "method": "POST",
       "path": "/api/v1/schedules/{schedule_id}/run",
       "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats",
+      "query": [
+        "range"
+      ]
     },
     {
       "method": "GET",
@@ -339,6 +346,50 @@
       "job": true,
       "last_seen": true,
       "state": true
+    },
+    "stats": {
+      "approval_latency": "stats_series",
+      "bucket_s": true,
+      "cache_hit": "stats_series",
+      "from": true,
+      "generation": "stats_series",
+      "gpu_bucket_s": true,
+      "gpus": "stats_gpu[]",
+      "now": true,
+      "prefill": "stats_series",
+      "prefill_min_prompt_tokens": true,
+      "queue": "stats_series",
+      "range": true,
+      "sampling": {
+        "error": true,
+        "interval_s": true,
+        "last_at": true,
+        "ok": true
+      },
+      "to": true,
+      "tokens_per_day": {
+        "days": "stats_day[]",
+        "value": true
+      },
+      "tz": true
+    },
+    "stats_series": {
+      "value": true,
+      "points": "stats_point[]"
+    },
+    "stats_point": {
+      "t": true,
+      "v": true
+    },
+    "stats_day": {
+      "date": true,
+      "tokens": true
+    },
+    "stats_gpu": {
+      "index": true,
+      "name": true,
+      "power": "stats_series",
+      "temp": "stats_series"
     }
   },
   "ws": {

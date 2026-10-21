@@ -30,6 +30,7 @@ EXPECTED_TABLES = {
     "devices",
     "pairing_codes",
     "push_log",
+    "gpu_samples",  # B5
 }
 
 

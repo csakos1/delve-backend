@@ -96,6 +96,17 @@ class Settings(BaseSettings):
     schedule_catchup_s: Annotated[float, Field(ge=0, le=86_400)] = Field(
         default=3600.0, validation_alias=_env("DELVE_SCHEDULE_CATCHUP_S")
     )
+    # B5: Observability. GPU samples for the temperature/power series (0 turns sampling
+    # off); the cleanup drops samples and push_log rows past their retention.
+    stats_sample_s: Annotated[float, Field(ge=0, le=3600)] = Field(
+        default=60.0, validation_alias=_env("DELVE_STATS_SAMPLE_S")
+    )
+    gpu_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=30, validation_alias=_env("DELVE_GPU_RETENTION_DAYS")
+    )
+    push_log_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=90, validation_alias=_env("DELVE_PUSH_LOG_RETENTION_DAYS")
+    )
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")

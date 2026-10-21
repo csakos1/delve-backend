@@ -383,3 +383,21 @@ class PushLog(Base):
     sent_at: Mapped[datetime] = _now()
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class GpuSample(Base):
+    """One `gpu.status` reading per GPU, every DELVE_STATS_SAMPLE_S (B5, Observability).
+
+    Kept for DELVE_GPU_RETENTION_DAYS; the primary key leads with `ts`, so the range
+    reads and the cleanup use it.
+    """
+
+    __tablename__ = "gpu_samples"
+
+    ts: Mapped[datetime] = mapped_column(TZ, primary_key=True)
+    gpu_index: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    temp_c: Mapped[float | None] = mapped_column(REAL)
+    power_w: Mapped[float | None] = mapped_column(REAL)
+    util_pct: Mapped[float | None] = mapped_column(REAL)
+    mem_used_mib: Mapped[int | None] = mapped_column(Integer)

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from delve import API_REVISION, REVISION, __version__
 from delve.api import devices, rest, ws
 from delve.api import schedules as schedules_api
+from delve.api import stats as stats_api
 from delve.api import system as system_api
 from delve.brief import BriefService
 from delve.cards.ingest import CardIngester
@@ -28,6 +29,7 @@ from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
 from delve.schedules import ScheduleService
+from delve.stats import StatsService
 from delve.system import HelperClient, SystemService
 
 log = logging.getLogger("delve.app")
@@ -107,11 +109,20 @@ def create_app(
             catchup_s=settings.schedule_catchup_s,
         )
         app.state.schedules = schedules
+        stats = StatsService(
+            sessionmaker,
+            helper,
+            sample_s=settings.stats_sample_s,
+            gpu_retention_days=settings.gpu_retention_days,
+            push_log_retention_days=settings.push_log_retention_days,
+        )
+        app.state.stats = stats
         if run_worker:
             await system.start()  # before the worker: a held queue must not start a run
             await manager.start()
             await ingester.start()
             await schedules.start()
+            await stats.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -119,6 +130,7 @@ def create_app(
         try:
             yield
         finally:
+            await stats.close()
             await schedules.close()
             await ingester.close()
             await system.close()
@@ -144,6 +156,7 @@ def create_app(
     app.include_router(devices.router)
     app.include_router(system_api.router)
     app.include_router(schedules_api.router)
+    app.include_router(stats_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

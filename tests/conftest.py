@@ -30,6 +30,10 @@ BASE_ENV = {
     # unreachable on purpose: unit tests must not depend on a database
     "DELVE_DATABASE_URL": "postgresql+asyncpg://nobody@127.0.0.1:1/none",
     "DELVE_DB_CONNECT_TIMEOUT_S": "0.5",
+    # never the machine's real helper; no GPU sampler beside the app tests' fake helpers
+    # (test_stats drives the sampler itself)
+    "DELVE_HELPER_SOCKET": "/nonexistent/delve-helper.sock",
+    "DELVE_STATS_SAMPLE_S": "0",
 }
 
 
@@ -54,8 +58,8 @@ def pg_url() -> str:
 # --- database fixtures for the run manager / API tests --------------------------------
 
 TABLES = (
-    "push_log, devices, system_state, schedules, card_ingest_offsets, cards, approvals, "
-    "tool_steps, run_events, runs, attachments, messages, conversations"
+    "gpu_samples, push_log, devices, system_state, schedules, card_ingest_offsets, cards, "
+    "approvals, tool_steps, run_events, runs, attachments, messages, conversations"
 )
 
 

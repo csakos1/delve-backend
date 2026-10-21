@@ -27,6 +27,7 @@ from delve.serialize import (
     run_out,
     step_out,
 )
+from delve.stats import GpuBucket, RunRow, stats_out
 from delve.system import Parts, gpu_out, hermes_issues, system_out
 
 _T = datetime(2026, 1, 1, tzinfo=UTC)
@@ -94,7 +95,39 @@ def shapes() -> dict[str, Any]:
         # B4: the `payload` of a `brief` card (water: null when there was no reading)
         "brief_payload": brief_keys,
         "brief_incident": _keys(brief["incidents"][0]),
+        # B5: GET /api/v1/stats (points: one per bucket, v null without data)
+        "stats": _stats_keys(),
+        "stats_series": _keys({k: v for k, v in _stats()["generation"].items() if k != "points"})
+        | {"points": "stats_point[]"},
+        "stats_point": _keys(_stats()["generation"]["points"][0]),
+        "stats_day": _keys(_stats()["tokens_per_day"]["days"][0]),
+        "stats_gpu": {
+            **_keys({"index": 0, "name": "n"}),
+            "power": "stats_series",
+            "temp": "stats_series",
+        },
     }
+
+
+def _stats() -> dict[str, Any]:
+    run = RunRow(status="completed", queued_at=_T, started_at=_T, ended_at=_T, usage={},
+                 perf={})  # fmt: skip
+    gpu = GpuBucket(index=0, name="n", temp=[None], power=[None], last_temp=None,
+                    last_power=None)  # fmt: skip
+    return stats_out(
+        range_key="24h", now=_T, runs=[run], latencies=[], queued_now=0, gpus=[gpu],
+        gpu_edges=[_T, _T], sampling={"interval_s": 60, "ok": True, "error": None,
+                                      "last_at": None},
+    )  # fmt: skip
+
+
+def _stats_keys() -> dict[str, Any]:
+    out: dict[str, Any] = _keys(_stats())
+    for name in ("generation", "prefill", "queue", "approval_latency", "cache_hit"):
+        out[name] = "stats_series"
+    out["tokens_per_day"] = {"days": "stats_day[]", "value": True}
+    out["gpus"] = "stats_gpu[]"
+    return out
 
 
 def rest() -> list[dict[str, Any]]:
