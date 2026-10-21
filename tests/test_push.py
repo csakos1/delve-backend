@@ -395,21 +395,32 @@ async def test_run_done(rig: Rig) -> None:
 
 
 @pg
-async def test_run_done_skips_live_devices_and_short_runs(rig: Rig) -> None:
+async def test_run_done_despite_a_live_socket_but_not_for_short_runs(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
     h = rig.h
+    # a phone locked a moment ago: its socket still looks live here, the push must go
+    # (the app itself shows nothing while it is in the foreground)
     conn = rig.push.presence.enter(rig.devices["pixel"])
     h.fake.enqueue("protocol/e1")
     await h.send()
     await h.mgr.start()
-    await rig.drain()
-    assert rig.google.sends == []  # the app is open: it shows the answer itself
+    with caplog.at_level("INFO", logger="delve.push"):
+        await rig.drain()
+    (msg,) = rig.google.sends
+    assert msg["data"]["kind"] == "run_done"
+    sent = [r for r in caplog.records if r.getMessage() == "push sent"]
+    assert sent and sent[-1].socket is True  # type: ignore[attr-defined]
     rig.push.presence.leave(conn)
 
     rig.push._run_done_min_s = 3600
-    h.fake.enqueue("protocol/e1")
-    await h.send()
-    await rig.drain()
-    assert rig.google.sends == []
+    h.fake.enqueue("protocol/e2")  # another recorded run (e1's id is taken)
+    caplog.clear()
+    with caplog.at_level("INFO", logger="delve.push"):
+        await h.send()
+        await rig.drain()
+    assert len(rig.google.sends) == 1
+    assert any(r.getMessage() == "run_done not pushed: short run" for r in caplog.records)
 
 
 @pg

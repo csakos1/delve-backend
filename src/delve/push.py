@@ -12,8 +12,11 @@ Kinds (every value is a string, as FCM requires):
 * `approval_resolved` - `request_id, status`: the approval was answered, expired or
   cancelled; the app removes its notification. Only for approvals that were pushed.
 * `run_done` - `conversation_id, run_id, title, status` (`completed` or `failed`),
-  `preview` (the answer's first 120 characters). Only to devices without a live WebSocket,
-  and only for runs of at least `PUSH_RUN_DONE_MIN_S` seconds (scheduled runs always).
+  `preview` (the answer's first 120 characters). For runs of at least `PUSH_RUN_DONE_MIN_S`
+  seconds (scheduled runs always). Sent whether or not the phone has a socket open: the app
+  shows nothing while it is in the foreground. (Skipping devices with a live socket missed
+  runs that ended right after the phone was locked: the socket's close may never arrive,
+  and it looked live for up to a minute.)
 * `card` - a new water-level card from the scheduled script: `card_id, type, severity,
   station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at`
   (empty when unknown). Not for cards older than an hour (history on first ingest).
@@ -109,7 +112,10 @@ class Connection:
 class Presence:
     """Live WebSocket connections per device. A connection counts while a frame arrived
     from it within `stale_s` (the app pings every 20 s): a phone that lost its network
-    may leave a socket that looks open on this side for minutes."""
+    may leave a socket that looks open on this side for minutes.
+
+    Only reported in the push log line (`socket`), never used to skip a push: a phone
+    locked a moment ago still looks live here (see `run_done` above)."""
 
     def __init__(self, stale_s: float = 60.0, clock: Callable[[], float] = time.monotonic):
         self.stale_s = stale_s
@@ -464,7 +470,13 @@ class PushService:
             if run.origin != "schedule":
                 if run.started_at is None or run.ended_at is None:
                     return
-                if (run.ended_at - run.started_at).total_seconds() < self._run_done_min_s:
+                secs = (run.ended_at - run.started_at).total_seconds()
+                if secs < self._run_done_min_s:
+                    log.info(
+                        "run_done not pushed: short run",
+                        extra={"ref": run_id, "secs": round(secs, 1),
+                               "min_s": self._run_done_min_s},
+                    )  # fmt: skip
                     return
             title = await _title(s, run.conversation_id)
             answer = (
@@ -485,7 +497,7 @@ class PushService:
         }
         await self._send(
             "run_done", "run_done", run_id, data, high=True, ttl_s=RUN_DONE_TTL_S,
-            collapse_key=None, skip_live=True,
+            collapse_key=None,
         )  # fmt: skip
 
     async def _card(self, card_id: str) -> None:
@@ -516,7 +528,6 @@ class PushService:
         high: bool,
         ttl_s: int,
         collapse_key: str | None,
-        skip_live: bool = False,
     ) -> None:
         assert self.fcm is not None  # noqa: S101  # only called while enabled
         async with self._sm() as s:
@@ -528,9 +539,7 @@ class PushService:
                 )
             ).all()
         targets = [
-            (dev_id, tok)
-            for dev_id, tok, notify in rows
-            if notify_settings(notify)[setting] and not (skip_live and self.presence.live(dev_id))
+            (dev_id, tok) for dev_id, tok, notify in rows if notify_settings(notify)[setting]
         ]
         for dev_id, tok in targets:
             result = await self.fcm.send(
@@ -549,7 +558,11 @@ class PushService:
                     )
                 await s.commit()
             if result.ok:
-                log.info("push sent", extra={"kind": kind, "ref": ref, "device": str(dev_id)})
+                log.info(
+                    "push sent",
+                    extra={"kind": kind, "ref": ref, "device": str(dev_id),
+                           "socket": self.presence.live(dev_id)},
+                )  # fmt: skip
             else:
                 log.warning(
                     "push failed",

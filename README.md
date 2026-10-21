@@ -283,7 +283,7 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 | `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
 | `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
 | `card` | `card_id, type, severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
-| `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | to devices **without a live WebSocket**, for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always); high priority |
+| `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
 Every kind goes with high priority: a normal-priority message waits while the phone
 dozes and arrives only when it wakes (or the app is opened).
@@ -291,8 +291,10 @@ dozes and arrives only when it wakes (or the app is opened).
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
 milliseconds). Each device chooses with `notify` (`approvals`, `run_done`; `water`, `brief`
-for later card kinds); revoked devices and devices without an FCM token get nothing. A
-socket counts as live while a frame arrived from it within 60 s (the app pings). An
+for later card kinds); revoked devices and devices without an FCM token get nothing.
+Whether the phone has a socket open does not matter: a phone locked a moment ago may
+still look connected here for up to a minute (its close never arrived), so the log line
+`push sent` only reports it (`socket`, live while a frame arrived within 60 s). An
 `UNREGISTERED` answer clears the device's FCM token; 429/5xx are retried 3 times. Every
 send is logged in `push_log`.
 
