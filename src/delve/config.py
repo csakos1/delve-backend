@@ -89,6 +89,13 @@ class Settings(BaseSettings):
         default=180.0, validation_alias=_env("DELVE_LLAMA_START_WAIT_S")
     )
 
+    # B4: schedules (the morning brief is one of them, its time is in the database)
+    schedule_tick_s: Annotated[float, Field(gt=0, le=300)] = Field(
+        default=30.0, validation_alias=_env("DELVE_SCHEDULE_TICK_S")
+    )
+    schedule_catchup_s: Annotated[float, Field(ge=0, le=86_400)] = Field(
+        default=3600.0, validation_alias=_env("DELVE_SCHEDULE_CATCHUP_S")
+    )
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")

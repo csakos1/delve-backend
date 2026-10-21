@@ -37,6 +37,7 @@ from delve.runs.manager import NotFound, RunManager
 log = logging.getLogger("delve.system")
 
 INTENT_KEY = "llama_intent"
+SLOTS_KEY = "llama_slots"  # the slot count from the last /props, for a stopped llama (N51)
 STATUS_TIMEOUT_S = 15.0  # helper's own systemctl show limit is 10 s
 CONTROL_TIMEOUT_S = 45.0  # stop/start (25 s) + the status read after it (10 s)
 MAX_RESPONSE = 64 * 1024
@@ -267,6 +268,8 @@ class SystemService:
         self._snap_lock = asyncio.Lock()
         self._cached: tuple[float, dict[str, Any]] | None = None
         self._known_slots: int | None = None
+        self._saved_slots: int | None = None
+        self._slot_error: str | None = None  # the last /slots failure, logged once
         self._starting: asyncio.Task[None] | None = None
         self._watch: asyncio.Task[None] | None = None
         self.intent: str | None = None  # "stopped" | "starting" | None
@@ -292,6 +295,14 @@ class SystemService:
             log.warning("llama intent not readable yet", extra={"error": type(exc).__name__})
             return
         self._intent_loaded = True
+        with contextlib.suppress(Exception):
+            async with self._sm() as s:
+                slots = await s.get(SystemState, SLOTS_KEY)
+            value = slots.value if slots is not None else None
+            n = value.get("slots") if isinstance(value, dict) else None
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                self._known_slots = self._known_slots or n
+                self._saved_slots = n
         if row is not None and isinstance(row.value, dict) and row.value.get("state") == "stopped":
             self.intent = "stopped"
             self._mgr.hold(True)
@@ -314,7 +325,23 @@ class SystemService:
                 return self._cached[1]
             out = system_out(await self._gather())
             self._cached = (time.monotonic(), out)
+            if self._known_slots is not None and self._known_slots != self._saved_slots:
+                await self._save_slots(self._known_slots)
             return out
+
+    async def _save_slots(self, n: int) -> None:
+        stmt = insert(SystemState).values(key=SLOTS_KEY, value={"slots": n})
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[SystemState.key],
+            set_={"value": stmt.excluded.value, "updated_at": func.now()},
+        )
+        try:
+            async with self._sm() as s:
+                await s.execute(stmt)
+                await s.commit()
+            self._saved_slots = n
+        except Exception as exc:
+            log.warning("slot count not saved", extra={"error": type(exc).__name__})
 
     async def publish(self) -> dict[str, Any]:
         snap = await self.snapshot(fresh=True)
@@ -351,6 +378,12 @@ class SystemService:
                 self._known_slots = props.slots or self._known_slots
             if not isinstance(slot, BaseException):
                 p.slot_busy = slot.processing
+                self._slot_error = None
+            else:
+                err = f"{type(slot).__name__}: {slot}"[:200]
+                if err != self._slot_error:  # once per kind of failure, not every 10 s
+                    log.warning("llama /slots not readable", extra={"error": err})
+                self._slot_error = err
 
         async def hermes_part() -> None:
             if p.hermes_ok is False:

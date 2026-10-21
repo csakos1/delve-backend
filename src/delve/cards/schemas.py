@@ -100,7 +100,53 @@ def validate_water(p, now):
     return {k: v for k, v in out.items() if v is not None}
 
 
-VALIDATORS = {"water": validate_water}
+# --- updates (csak a no-agent script publikálja, LLM-tool nincs hozzá) -------------
+UPDATES_FIELDS = ("count", "packages", "checked_at", "data_source")
+UPDATES_MAX_PACKAGES = 20
+_PKG_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789@._+-")
+
+
+def validate_updates(p, now):
+    if not isinstance(p, dict):
+        raise CardValidationError(["payload: must be an object"])
+    errs = []
+    unknown = sorted(set(p) - set(UPDATES_FIELDS))
+    if unknown:
+        errs.append(f"unknown fields: {', '.join(map(str, unknown))}")
+    count = p.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        errs.append("count: required integer")
+        count = None
+    elif not 0 <= count <= 100000:
+        errs.append("count: out of range [0, 100000]")
+        count = None
+    packages = p.get("packages", [])
+    clean_pkgs = []
+    if not isinstance(packages, list):
+        errs.append("packages: must be a list")
+    elif len(packages) > UPDATES_MAX_PACKAGES:
+        errs.append(f"packages: max {UPDATES_MAX_PACKAGES} names")
+    else:
+        for name in packages:
+            if (not isinstance(name, str) or not 0 < len(name) <= 128
+                    or not set(name.lower()) <= _PKG_CHARS):
+                errs.append("packages: names must be pacman package names")
+                break
+            clean_pkgs.append(name)
+    if count is not None and len(clean_pkgs) > count:
+        errs.append("packages: more names than count")
+    out = {
+        "count": count,
+        "packages": clean_pkgs,
+        "checked_at": _ts(p.get("checked_at"), "checked_at", errs, now),
+        "data_source": _str(p.get("data_source"), "data_source", 120, errs, False),
+    }
+    if errs:
+        raise CardValidationError(errs)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+VALIDATORS = {"water": validate_water, "updates": validate_updates}
 
 
 def build_event(card_type, payload, severity, origin, session_id=None, now=None):

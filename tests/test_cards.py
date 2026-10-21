@@ -68,6 +68,18 @@ def test_parse_valid_and_history() -> None:
     assert c.payload["level_cm"] == 98.0 and c.payload["station"] == "Siófok"
 
 
+def test_parse_updates_card() -> None:
+    ts = datetime.now(UTC).replace(microsecond=0)
+    payload = {"count": 44, "packages": ["clang", "firefox"], "checked_at": ts.isoformat()}
+    ev = {**water_event(ts=ts), "type": "updates", "payload": payload}
+    card = parse_line(line(ev))
+    assert (card.type, card.payload["count"], card.payload["packages"]) == (
+        "updates", 44, ["clang", "firefox"]
+    )  # fmt: skip
+    with pytest.raises(InvalidCard):
+        parse_line(line({**ev, "payload": {**ev["payload"], "count": "44"}}))
+
+
 def test_parse_recorded_fixtures() -> None:
     for f in FIXTURES.glob("*.jsonl"):
         for raw in f.read_bytes().splitlines():

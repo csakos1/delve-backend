@@ -29,6 +29,7 @@ class FakeHelper:
         self.silent: set[str] = set()  # verbs that never answer
         self.llama = llama
         self.start_to = "loading"  # the fake llama's /health right after llama.start
+        self.incidents = "closed"  # agent.incidents answer: closed | detected | none
         self._server: socketserver.ThreadingUnixStreamServer | None = None
 
     def answer(self, verb: str) -> dict[str, Any]:
@@ -50,6 +51,10 @@ class FakeHelper:
             data = self.responses["hermes.status/running"]
         elif verb == "gpu.status":
             data = self.responses[f"gpu.status/{self.state}"]
+        elif verb == "host.status":
+            data = self.responses["host.status/ok"]
+        elif verb == "agent.incidents":
+            data = self.responses[f"agent.incidents/{self.incidents}"]
         else:
             return {"ok": False, "error": "unknown_verb", "message": "unknown verb"}
         return {"ok": True, "verb": verb, "data": data}

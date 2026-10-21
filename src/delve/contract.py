@@ -10,12 +10,15 @@ repository keeps a copy and checks its models against it.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from delve import API_REVISION, protocol
-from delve.db.models import Approval, Card, Conversation, Message, Run, ToolStep
+from delve.brief import brief_payload
+from delve.db.models import Approval, Card, Conversation, Message, Run, Schedule, ToolStep
 from delve.llama import Props
+from delve.schedules import schedule_out
 from delve.serialize import (
     approval_out,
     card_out,
@@ -59,6 +62,20 @@ def shapes() -> dict[str, Any]:
     system["hermes"]["issues"] = "hermes_issue[]"
     system["gpus"] = "gpu[]|null"
     issue = hermes_issues({"readiness": {"checks": {"disk": {"status": "degraded"}}}})[0]
+    sched = Schedule(
+        id=uuid.UUID(int=1), kind="prompt", name="n", cron="30 7 * * *", prompt="p",
+        conversation_mode="new", thinking=False, enabled=True, created_at=_T, updated_at=_T,
+    )  # fmt: skip
+    brief = brief_payload(
+        now=_T, host={"uptime_s": 1, "booted_at": 1},
+        incidents=[{"id": "i", "state": "detected"}],
+        updates=card, water=card,
+        system={"llama": {"status": "running"}, "hermes": {"status": "ok"}},
+    )  # fmt: skip
+    brief_keys = _keys(brief)
+    brief_keys["water"] = {k: True for k in sorted(brief["water"])} if brief["water"] else True
+    brief_keys["incidents"] = "brief_incident[]"
+    brief_keys["missing"] = "string[]"
     return {
         "conversation": _keys(conversation_out(conv)),
         "message": _keys(message_out(msg)),
@@ -72,6 +89,11 @@ def shapes() -> dict[str, Any]:
         "system": system,
         "gpu": _keys(gpu_out({})),
         "hermes_issue": _keys(issue),
+        # B4: GET /api/v1/schedules items, schedule.updated
+        "schedule": _keys(schedule_out(sched)),
+        # B4: the `payload` of a `brief` card (water: null when there was no reading)
+        "brief_payload": brief_keys,
+        "brief_incident": _keys(brief["incidents"][0]),
     }
 
 

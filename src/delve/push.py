@@ -17,9 +17,12 @@ Kinds (every value is a string, as FCM requires):
   shows nothing while it is in the foreground. (Skipping devices with a live socket missed
   runs that ended right after the phone was locked: the socket's close may never arrive,
   and it looked live for up to a minute.)
-* `card` - a new water-level card from the scheduled script: `card_id, type, severity,
-  station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at`
-  (empty when unknown). Not for cards older than an hour (history on first ingest).
+* `card` - a new water-level card from the scheduled script: `card_id, type` (`water`),
+  `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h,
+  measured_at` (empty when unknown); or the morning brief (B4): `card_id, type` (`brief`),
+  `severity, date, uptime_s, updates_count, open_incidents, llama_state, level_cm,
+  lake_avg_cm`. Not for cards older than an hour (history on first ingest). Water goes to
+  devices with `notify.water`, the brief to those with `notify.brief`.
 
 Priority: every kind goes as HIGH. A NORMAL message waits while the phone dozes -
 screen off, lying still - until a maintenance window or until it wakes, so a 08:52 water
@@ -76,6 +79,7 @@ RUN_DONE_TTL_S = 6 * 3600
 CARD_TTL_S = 12 * 3600
 # a card read from history (first ingest, a replaced file) is not news
 CARD_PUSH_MAX_AGE_S = 3600
+BRIEF_PUSH_FIELDS = ("date", "uptime_s", "updates_count", "open_incidents", "llama_state")
 WATER_PUSH_FIELDS = (
     "station",
     "level_cm",
@@ -503,19 +507,20 @@ class PushService:
     async def _card(self, card_id: str) -> None:
         async with self._sm() as s:
             card = await s.get(Card, card_id)
-        if card is None or card.type != "water":
+        if card is None or card.type not in ("water", "brief"):
             return
         p = card.payload or {}
-        data = {
-            "kind": "card",
-            "card_id": card.id,
-            "type": card.type,
-            "severity": card.severity,
-            **{k: _text(p.get(k)) for k in WATER_PUSH_FIELDS},
-        }
+        data = {"kind": "card", "card_id": card.id, "type": card.type, "severity": card.severity}
+        if card.type == "water":
+            data.update({k: _text(p.get(k)) for k in WATER_PUSH_FIELDS})
+        else:
+            raw = p.get("water")
+            water: dict[str, Any] = raw if isinstance(raw, dict) else {}
+            data.update({k: _text(p.get(k)) for k in BRIEF_PUSH_FIELDS})
+            data.update({k: _text(water.get(k)) for k in ("level_cm", "lake_avg_cm")})
         await self._send(
-            "water", "card", card_id, data, high=True, ttl_s=CARD_TTL_S,
-            collapse_key="water",
+            card.type, "card", card_id, data, high=True, ttl_s=CARD_TTL_S,
+            collapse_key=card.type,
         )  # fmt: skip
 
     async def _send(
@@ -602,8 +607,10 @@ async def _title(s: AsyncSession, conversation_id: str) -> str:
 
 
 def _card_worth_a_push(card: Mapping[str, Any]) -> bool:
-    """Water level after each scheduled reading (the cron script), when it is new."""
-    if card.get("type") != "water" or card.get("origin") != "script":
+    """Water level after each scheduled reading (the cron script) and the morning brief
+    (the backend), when it is new."""
+    kind = (card.get("type"), card.get("origin"))
+    if kind not in (("water", "script"), ("brief", "backend")):
         return False
     try:
         ts = datetime.fromisoformat(str(card.get("ts")))

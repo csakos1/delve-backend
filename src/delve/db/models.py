@@ -188,6 +188,7 @@ class Run(Base):
         CheckConstraint("origin IN ('app','late_approval','schedule','system')", name="origin"),
         CheckConstraint(_in("status", RUN_STATUSES), name="status"),
         Index(None, "status"),
+        Index(None, "schedule_id"),
     )
 
 
@@ -293,21 +294,35 @@ class Schedule(Base):
     __tablename__ = "schedules"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # 'prompt': a prompt sent as a run; 'brief': the built-in morning brief (one row, B4)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'prompt'"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     cron: Mapped[str] = mapped_column(Text, nullable=False)  # 5 fields, Europe/Budapest
-    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str | None] = mapped_column(Text)
     conversation_mode: Mapped[str] = mapped_column(Text, nullable=False)
     conversation_id: Mapped[str | None] = mapped_column(Text, ForeignKey("conversations.id"))
     thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     last_run_at: Mapped[datetime | None] = mapped_column(TZ)
     next_run_at: Mapped[datetime | None] = mapped_column(TZ)
+    # the brief's own outcome ('ok' | 'failed'); a prompt schedule's comes from its last run
+    last_status: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
 
     __table_args__ = (
         CheckConstraint("conversation_mode IN ('new','fixed')", name="conversation_mode"),
         CheckConstraint(
             "conversation_mode = 'new' OR conversation_id IS NOT NULL", name="fixed_has_conv"
+        ),
+        CheckConstraint("kind IN ('prompt','brief')", name="kind"),
+        CheckConstraint("kind = 'brief' OR prompt IS NOT NULL", name="prompt_has_text"),
+        Index(
+            "uq_schedules_brief",
+            "kind",
+            unique=True,
+            postgresql_where=text("kind = 'brief'"),
         ),
     )
 

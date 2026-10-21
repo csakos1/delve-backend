@@ -1,5 +1,5 @@
 {
-  "api_revision": 5,
+  "api_revision": 6,
   "rest": [
     {
       "method": "GET",
@@ -95,6 +95,31 @@
     {
       "method": "GET",
       "path": "/api/v1/runs/open",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/schedules",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/schedules",
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/schedules/{schedule_id}",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/schedules/{schedule_id}",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/schedules/{schedule_id}/run",
       "query": []
     },
     {
@@ -267,6 +292,53 @@
       "check": true,
       "detail": true,
       "status": true
+    },
+    "schedule": {
+      "conversation_id": true,
+      "conversation_mode": true,
+      "conversation_title": true,
+      "created_at": true,
+      "cron": true,
+      "description": true,
+      "enabled": true,
+      "id": true,
+      "kind": true,
+      "last_error": true,
+      "last_run_at": true,
+      "last_run_id": true,
+      "last_status": true,
+      "name": true,
+      "next_run_at": true,
+      "prompt": true,
+      "thinking": true,
+      "updated_at": true
+    },
+    "brief_payload": {
+      "booted_at": true,
+      "date": true,
+      "hermes_state": true,
+      "incidents": "brief_incident[]",
+      "llama_state": true,
+      "missing": "string[]",
+      "open_incidents": true,
+      "updates_checked_at": true,
+      "updates_count": true,
+      "uptime_s": true,
+      "water": {
+        "lake_avg_cm": true,
+        "lake_avg_trend_cm_24h": true,
+        "level_cm": true,
+        "measured_at": true,
+        "station": true,
+        "trend_cm_24h": true
+      }
+    },
+    "brief_incident": {
+      "error": true,
+      "id": true,
+      "job": true,
+      "last_seen": true,
+      "state": true
     }
   },
   "ws": {
@@ -467,6 +539,29 @@
         "conversation_id",
         "run_id",
         "status"
+      ],
+      "schedule.deleted": [
+        "id"
+      ],
+      "schedule.updated": [
+        "conversation_id",
+        "conversation_mode",
+        "conversation_title",
+        "created_at",
+        "cron",
+        "description",
+        "enabled",
+        "id",
+        "kind",
+        "last_error",
+        "last_run_at",
+        "last_run_id",
+        "last_status",
+        "name",
+        "next_run_at",
+        "prompt",
+        "thinking",
+        "updated_at"
       ],
       "system.updated": [
         "checked_at",

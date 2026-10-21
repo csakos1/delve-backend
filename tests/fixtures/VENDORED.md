@@ -15,3 +15,8 @@ commit above in the same change.
 answers for those samples: the `data` of `bin/delve-helper`'s `parse_show` / `parse_gpus`
 run over `llama-show-*.txt`, `hermes-show-running.txt` and `gpu-*.csv` there, keyed
 `<verb>/<state>`. Regenerate it when the helper's output changes.
+
+`system/helper-responses.json` also holds `host.status/ok` and `agent.incidents/{closed,
+detected,none}` (B4): `host_status()` over `proc-*.txt` and `parse_incidents()` over
+`incidents-*.txt` of `delve-infra` `tests/fixtures/system/` (`detected` is that repository's
+synthetic sample).

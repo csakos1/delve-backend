@@ -15,7 +15,9 @@ from fastapi.responses import JSONResponse
 
 from delve import API_REVISION, REVISION, __version__
 from delve.api import devices, rest, ws
+from delve.api import schedules as schedules_api
 from delve.api import system as system_api
+from delve.brief import BriefService
 from delve.cards.ingest import CardIngester
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
@@ -25,6 +27,7 @@ from delve.llama import LlamaClient
 from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
+from delve.schedules import ScheduleService
 from delve.system import HelperClient, SystemService
 
 log = logging.getLogger("delve.app")
@@ -83,21 +86,32 @@ def create_app(
             sessionmaker, hub, settings.cards_path, poll_s=settings.cards_poll_s
         )
         app.state.card_ingester = ingester
+        helper = HelperClient(settings.helper_socket)
         system = SystemService(
             sessionmaker,
             manager,
             hub,
             hermes,
             llama,
-            HelperClient(settings.helper_socket),
+            helper,
             start_wait_s=settings.llama_start_wait_s,
             **(system_options or {}),
         )
         app.state.system = system
+        schedules = ScheduleService(
+            sessionmaker,
+            manager,
+            hub,
+            BriefService(sessionmaker, hub, helper, system),
+            tick_s=settings.schedule_tick_s,
+            catchup_s=settings.schedule_catchup_s,
+        )
+        app.state.schedules = schedules
         if run_worker:
             await system.start()  # before the worker: a held queue must not start a run
             await manager.start()
             await ingester.start()
+            await schedules.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -105,6 +119,7 @@ def create_app(
         try:
             yield
         finally:
+            await schedules.close()
             await ingester.close()
             await system.close()
             await manager.close()
@@ -128,6 +143,7 @@ def create_app(
     app.include_router(rest.router)
     app.include_router(devices.router)
     app.include_router(system_api.router)
+    app.include_router(schedules_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

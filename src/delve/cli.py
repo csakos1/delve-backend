@@ -28,7 +28,15 @@ from delve.db.models import Device
 from delve.db.session import make_engine, make_sessionmaker
 
 DEFAULT_DB_URL = "postgresql+asyncpg:///delve?host=/run/postgresql"
-HELPER_VERBS = ("llama.status", "hermes.status", "gpu.status", "llama.start", "llama.stop")
+HELPER_VERBS = (
+    "llama.status",
+    "hermes.status",
+    "gpu.status",
+    "host.status",
+    "agent.incidents",
+    "llama.start",
+    "llama.stop",
+)
 
 
 def _db_url() -> str:
@@ -160,10 +168,13 @@ def _db_name() -> str:
 
 
 async def _helper(verb: str) -> int:
+    from delve.brief import INCIDENTS_TIMEOUT_S
     from delve.system import CONTROL_TIMEOUT_S, STATUS_TIMEOUT_S, HelperClient, HelperFailed
 
     path = Path(os.environ.get("DELVE_HELPER_SOCKET", "/run/delve-helper.sock"))
     timeout = CONTROL_TIMEOUT_S if verb in ("llama.start", "llama.stop") else STATUS_TIMEOUT_S
+    if verb == "agent.incidents":
+        timeout = INCIDENTS_TIMEOUT_S
     try:
         data = await HelperClient(path).call(verb, timeout_s=timeout)
     except HelperFailed as exc:

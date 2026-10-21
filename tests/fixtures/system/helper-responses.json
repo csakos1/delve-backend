@@ -73,5 +73,39 @@
     "power_limit_w": 130.0
    }
   ]
+ },
+ "host.status/ok": {
+  "uptime_s": 135358,
+  "booted_at": 1792443359,
+  "boot_id": "8ea7721c-4790-4a12-a981-b52a87f45566"
+ },
+ "agent.incidents/closed": {
+  "incidents": [
+   {
+    "id": "98de85_009110dce5cf",
+    "state": "closed",
+    "job": "98de85fe6a1f",
+    "type": "script",
+    "first_seen": "2026-10-16T21:35:16.146881+02:00",
+    "last_seen": "2026-10-16T21:35:16.146881+02:00",
+    "error": "Script exited with code 2 stderr: cron_failtest: szimulált parse_failed"
+   }
+  ]
+ },
+ "agent.incidents/detected": {
+  "incidents": [
+   {
+    "id": "98de85_009110dce5cf",
+    "state": "detected",
+    "job": "98de85fe6a1f",
+    "type": "script",
+    "first_seen": "2026-10-16T21:35:16.146881+02:00",
+    "last_seen": "2026-10-16T21:35:16.146881+02:00",
+    "error": "Script exited with code 2 stderr: cron_failtest: szimulált parse_failed"
+   }
+  ]
+ },
+ "agent.incidents/none": {
+  "incidents": []
  }
 }

@@ -32,6 +32,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 8 | Push notifications (FCM), per-device notification settings, list preview | done |
 | 9 | Card ingest from the agent's `events.jsonl`, `GET /cards`, `card.new`, water-level push | done |
 | 10 | System view (Hermes, llama-server, GPUs, queue), llama-server stop/start with a held queue | done |
+| 11 | Schedules (cron, catch-up, run now) and the morning brief card; brief push | done |
 
 ## Development
 
@@ -127,6 +128,11 @@ needs `Authorization: Bearer <device token>`.
 | `GET` | `/api/v1/runs/open` | the queue: active run first, then queued ones; each with `position` (runs ahead) |
 | `GET` | `/api/v1/system` | the `system` view (below); one answer is reused for 2 s |
 | `POST` | `/api/v1/system/llama` | `{action: start\|stop, force?}` → the `system` view; 409 `run_active` (stop without `force` while a run is active), 503 `helper_unavailable`, 502 `helper_failed` |
+| `GET` | `/api/v1/schedules` | `{data: [schedule]}`, the morning brief first |
+| `POST` | `/api/v1/schedules` | `{name, cron, prompt, conversation_mode?: new\|fixed, conversation_id?, thinking?, enabled?}` → 201 `schedule`; 422 `invalid_cron`, `too_frequent`, `invalid_name`, `invalid_prompt`, `conversation_required`, `conversation_not_found`; 409 `too_many` (50) |
+| `PATCH` | `/api/v1/schedules/{id}` | any of the fields above → `schedule`; the brief takes only `cron` and `enabled` (422 `brief_fields`) |
+| `DELETE` | `/api/v1/schedules/{id}` | → 204; the brief: 409 `brief_fixed` |
+| `POST` | `/api/v1/schedules/{id}/run` | fire once now (timing unchanged) → `{schedule, run_id, card_id}` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -155,7 +161,7 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
-`health.status`, `card.new`, `system.updated`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -258,7 +264,8 @@ The unit has no capabilities, no devices and its own user namespace, so the unit
 `nvidia-smi` and starting/stopping llama-server go through the privileged helper of
 delve-infra (`bin/delve-helper`, socket-activated on `DELVE_HELPER_SOCKET`,
 `/run/delve-helper.sock`, group `delve`): one JSON line per connection, fixed verbs
-`llama.status|start|stop`, `hermes.status`, `gpu.status`. `sudo delve helper <verb>` asks it
+`llama.status|start|stop`, `hermes.status`, `gpu.status` (and for the brief `host.status`,
+`agent.incidents`). `sudo delve helper <verb>` asks it
 the same way the server does. Without the helper the view still answers (`helper.ok:
 false`, llama state from `/health`, no GPUs) and stop/start answer 503.
 
@@ -269,7 +276,44 @@ stored (`system_state['llama_intent']`) and holds the queue across a backend res
 **Starting** keeps the queue held until llama `/health` answers 200
 (`DELVE_LLAMA_START_WAIT_S`, 180 s, then it lets go anyway). A llama-server started
 elsewhere (terminal, reboot) releases the queue within 15 s. A llama-server that dies
-without being stopped from here is not held for: runs fail as before.
+without being stopped from here is not held for: runs fail as before. The slot count is
+kept (`system_state['llama_slots']`), so a stopped llama-server still shows it after a
+backend restart; a failing `/slots` read is logged once (`llama /slots not readable`).
+
+### Schedules and the morning brief
+
+A schedule is a 5-field cron expression in **Europe/Budapest** (`cronsim` with
+`zoneinfo`: on the autumn DST night a daily 02:30 fires once, in spring it fires at 03:00);
+it may not fire more often than every 10 minutes. `description` is the English
+explanation (`At 08:52, 12:52, and 20:52 every day`).
+
+| Key | Content |
+|---|---|
+| `kind` | `prompt` (the prompt goes into the run queue, origin `schedule`) or `brief` (the built-in morning brief; exactly one, seeded `30 7 * * *` by migration 0007 and re-created if missing) |
+| `conversation_mode`, `conversation_id`, `conversation_title` | `new`: a new conversation (origin `schedule`) for every run; `fixed`: always that conversation (unarchived when a run lands in it) |
+| `thinking` | the schedule's own setting: it wins over the conversation's |
+| `next_run_at` | `null` while disabled |
+| `last_run_at`, `last_status`, `last_error`, `last_run_id` | the last firing: for a prompt the status of its latest run (`queued` … `completed`, `failed`, `cancelled`), or `failed` with `last_error` (`conversation_missing`) when it could not be queued; for the brief `ok` or `failed` |
+
+Every `DELVE_SCHEDULE_TICK_S` (30 s; sooner when a schedule changes or the next one is
+due) the enabled schedules whose time has passed fire once, then the next time is taken
+from now - missed times in between are not repeated. A firing late by more than
+`DELVE_SCHEDULE_CATCHUP_S` (3600 s: the backend was down) is skipped with a
+`schedule missed` warning. Firing is idempotent: the run's `client_msg_id` and the brief's
+card id derive from the schedule and the due time. A scheduled run waits in the queue like
+any other run (also while llama-server is held) and always gets a `run_done` push.
+
+The **brief** is written without the model straight into `cards` (`type: brief`,
+`origin: backend`, `card.new`): `payload` = `{date, uptime_s, booted_at, open_incidents,
+incidents: [{id, state, job, error, last_seen}] (≤ 5), updates_count, updates_checked_at,
+water: {station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at},
+llama_state, hermes_state, missing}`. Uptime, boot and the agent's cron incidents come
+from the helper (`host.status`, `agent.incidents`; an incident is open until acknowledged,
+`resolved` included), the update count from the latest `updates` card of the agent's
+`arch-updates` script, the water reading from the latest scheduled `water` card (both at
+most 36 h old), the states from the system view. A source that cannot be read is `null`
+and named in `missing`. `severity`: `alert` (llama-server failed/down or Hermes down),
+`warn` (open incidents or something missing), else `info`.
 
 ### Push notifications
 
@@ -282,7 +326,8 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 |---|---|---|
 | `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
 | `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
-| `card` | `card_id, type, severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
+| `card` | `card_id, type` (`water`), `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
+| `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
 Every kind goes with high priority: a normal-priority message waits while the phone
@@ -290,8 +335,7 @@ dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
-milliseconds). Each device chooses with `notify` (`approvals`, `run_done`; `water`, `brief`
-for later card kinds); revoked devices and devices without an FCM token get nothing.
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`); revoked devices and devices without an FCM token get nothing.
 Whether the phone has a socket open does not matter: a phone locked a moment ago may
 still look connected here for up to a minute (its close never arrived), so the log line
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An

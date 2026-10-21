@@ -223,7 +223,14 @@ class RunManager:
         conversation_id: str | None = None,
         thinking: bool | None = None,
         origin: str = "app",
+        schedule_id: uuid.UUID | None = None,
     ) -> SubmitResult:
+        """Queue a user message as a run.
+
+        A scheduled run (`schedule_id` set, origin `schedule`) keeps the schedule's
+        `thinking` instead of the conversation's, and a new conversation it opens has
+        origin `schedule`.
+        """
         if not text.strip():
             raise InvalidRequest("empty message")
         if len(text) > MAX_INPUT_CHARS:
@@ -234,7 +241,11 @@ class RunManager:
                 return prev
             created_conv = conversation_id is None
             if conversation_id is None:
-                conv = Conversation(id=f"c_{uuid.uuid4().hex}", thinking=bool(thinking))
+                conv = Conversation(
+                    id=f"c_{uuid.uuid4().hex}",
+                    thinking=bool(thinking),
+                    origin="schedule" if schedule_id is not None else "app",
+                )
                 s.add(conv)
             else:
                 found = await s.get(Conversation, conversation_id)
@@ -259,8 +270,9 @@ class RunManager:
                 idempotency_key=uuid.uuid4(),
                 status="queued",
                 input=text,
-                thinking=conv.thinking,
+                thinking=conv.thinking if schedule_id is None else bool(thinking),
                 origin=origin,
+                schedule_id=schedule_id,
             )
             s.add_all([msg, run])
             try:
@@ -284,7 +296,7 @@ class RunManager:
                 "run_id": run_id,
                 "conversation_id": conv.id,
                 "position": position,
-                "thinking": conv.thinking,
+                "thinking": run.thinking,
                 "origin": origin,
             },
         )
@@ -592,7 +604,8 @@ class RunManager:
             if run is None or run.status != ("starting" if resume else "queued"):
                 return
             conv = _must(await s.get(Conversation, run.conversation_id))
-            run.thinking = conv.thinking  # the state when the run starts decides the route
+            if run.schedule_id is None:  # a scheduled run keeps the schedule's setting
+                run.thinking = conv.thinking  # the state when the run starts decides the route
             run.status, run.started_at = "starting", run.started_at or now()
             await s.commit()
             conv_id, thinking, text, key = conv.id, run.thinking, run.input, run.idempotency_key

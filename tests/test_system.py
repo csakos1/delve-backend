@@ -20,6 +20,7 @@ from delve.db.models import Run, SystemState
 from delve.llama import LlamaClient, Props, model_label
 from delve.system import (
     INTENT_KEY,
+    SLOTS_KEY,
     HelperClient,
     HelperFailed,
     HelperUnavailable,
@@ -439,7 +440,41 @@ async def test_intent_survives_a_restart_and_a_manual_start_releases(sysenv: Sys
     sysenv.llama.health = "ok"  # started from the terminal
     await _until(lambda: _not(h.mgr.held))
     assert fresh.intent is None and await _intent_row(h.db) is None
-    assert sysenv.events("system.updated")[-1]["llama"]["intent"] is None
+    seen: list[dict[str, Any]] = []
+
+    async def released_published() -> bool:  # the event follows the release
+        seen.extend(sysenv.events("system.updated"))
+        return bool(seen) and seen[-1]["llama"]["intent"] is None
+
+    await _until(released_published)
+
+
+@pg
+async def test_slot_count_survives_a_restart_and_slot_errors_are_logged_once(
+    sysenv: Sys, caplog: pytest.LogCaptureFixture
+) -> None:
+    h = sysenv.h
+    sysenv.llama.down = True  # /slots answers 503, /health and /props still fine
+    with caplog.at_level("WARNING", logger="delve.system"):
+        for _ in range(3):
+            snap = await sysenv.svc.snapshot(fresh=True)
+    assert (snap["llama"]["slots"], snap["llama"]["slots_busy"]) == (1, None)
+    assert [r.message for r in caplog.records].count("llama /slots not readable") == 1
+    async with h.db() as s:
+        row = await s.get(SystemState, SLOTS_KEY)
+    assert row is not None and row.value == {"slots": 1}
+
+    # a new process with llama-server stopped still knows the slot count
+    await sysenv.svc.stop_llama(force=False, by="pixel")
+    await sysenv.svc.close()
+    fresh = SystemService(
+        h.db, h.mgr, h.hub, h.hermes, sysenv.svc._llama, HelperClient(sysenv.helper.path),
+        watch_s=0.05, cache_s=0.0,
+    )  # fmt: skip
+    sysenv.svc = fresh
+    await fresh.start()
+    llama = (await fresh.snapshot(fresh=True))["llama"]
+    assert (llama["status"], llama["slots"], llama["slots_busy"]) == ("stopped", 1, 0)
 
 
 # --- REST ---------------------------------------------------------------------------------
@@ -532,6 +567,10 @@ def test_cli_helper(
     monkeypatch.setenv("DELVE_HELPER_SOCKET", str(helper.path))
     assert cli.main(["helper", "gpu.status"]) == 0
     assert json.loads(capsys.readouterr().out)["gpus"][0]["mem_total_mib"] == 12282
+    assert cli.main(["helper", "host.status"]) == 0
+    assert json.loads(capsys.readouterr().out)["uptime_s"] == 135358
+    assert cli.main(["helper", "agent.incidents"]) == 0
+    assert json.loads(capsys.readouterr().out)["incidents"][0]["state"] == "closed"
     helper.fail["llama.status"] = ("unit_not_found", "the unit does not exist for that user")
     assert cli.main(["helper", "llama.status"]) == 1
     assert "unit_not_found" in capsys.readouterr().err

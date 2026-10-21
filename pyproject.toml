@@ -19,6 +19,7 @@ dependencies = [
   "alembic>=1.14",
   "httpx>=0.28",
   "cryptography>=43",  # RS256 for the FCM service account (push.py)
+  "cronsim>=2.7",  # schedules: 5-field cron in Europe/Budapest, DST-aware (schedules.py)
   "websockets>=14",  # uvicorn's WebSocket implementation
 ]
 
