@@ -176,6 +176,8 @@ class RunManager:
         self.active_run_id: str | None = None
         self._ctx: _Ctx | None = None
         self.idle = asyncio.Event()  # set while nothing is queued or active (tests)
+        # set while llama-server is stopped on purpose (B3): queued runs wait, none starts
+        self._hold = False
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -197,6 +199,19 @@ class RunManager:
 
     def wake(self) -> None:
         self._wakeup.set()
+
+    @property
+    def held(self) -> bool:
+        return self._hold
+
+    def hold(self, on: bool) -> None:
+        """Keep queued runs waiting (llama stopped on purpose) or let them go again.
+
+        A run that is already active is not affected; the caller stops it if it must.
+        """
+        was, self._hold = self._hold, on
+        if was and not on:
+            self.wake()
 
     # --- commands --------------------------------------------------------------
 
@@ -511,7 +526,7 @@ class RunManager:
                 log.exception("queue read failed")
                 await asyncio.sleep(self._t.idle_poll_s)
                 continue
-            if qid is None:
+            if qid is None or self._hold:
                 self.idle.set()
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._wakeup.wait(), self._t.idle_poll_s)

@@ -1,5 +1,5 @@
 {
-  "api_revision": 4,
+  "api_revision": 5,
   "rest": [
     {
       "method": "GET",
@@ -100,6 +100,16 @@
     {
       "method": "GET",
       "path": "/api/v1/status",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/llama",
       "query": []
     },
     {
@@ -213,6 +223,50 @@
       "severity": true,
       "ts": true,
       "type": true
+    },
+    "system": {
+      "checked_at": true,
+      "gpus": "gpu[]|null",
+      "helper": {
+        "error": true,
+        "ok": true
+      },
+      "hermes": {
+        "issues": "hermes_issue[]",
+        "since": true,
+        "status": true,
+        "version": true
+      },
+      "llama": {
+        "ctx": true,
+        "gen_tps": true,
+        "intent": true,
+        "model": true,
+        "quant": true,
+        "since": true,
+        "slots": true,
+        "slots_busy": true,
+        "status": true
+      },
+      "queue": {
+        "active": true,
+        "queued": true
+      }
+    },
+    "gpu": {
+      "index": true,
+      "mem_total_mib": true,
+      "mem_used_mib": true,
+      "name": true,
+      "power_limit_w": true,
+      "power_w": true,
+      "temp_c": true,
+      "util_pct": true
+    },
+    "hermes_issue": {
+      "check": true,
+      "detail": true,
+      "status": true
     }
   },
   "ws": {
@@ -413,6 +467,14 @@
         "conversation_id",
         "run_id",
         "status"
+      ],
+      "system.updated": [
+        "checked_at",
+        "gpus",
+        "helper",
+        "hermes",
+        "llama",
+        "queue"
       ],
       "tool.completed": [
         "conversation_id",

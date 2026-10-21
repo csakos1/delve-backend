@@ -26,6 +26,9 @@ _CARD = frozenset(
     {"id", "type", "severity", "ts", "origin", "session_id", "payload", "received_at"}
 )
 
+# B3: the system view, also the body of GET /api/v1/system (nested keys in the contract)
+_SYSTEM = frozenset({"checked_at", "helper", "hermes", "llama", "queue", "gpus"})
+
 _CONTEXT = frozenset(
     {"conversation_id", "run_id", "tokens", "max", "pct", "warn", "source", "measured_at",
      "final"}
@@ -51,6 +54,7 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     "context.updated": _CONTEXT,
     "health.status": frozenset({"hermes", "hermes_version"}),
     "card.new": _CARD,
+    "system.updated": _SYSTEM,
     "error": frozenset({"code", "message", "ref_id"}),
 }
 

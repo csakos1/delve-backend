@@ -206,6 +206,13 @@ class HermesClient:
     async def health(self) -> Health:
         return Health.model_validate(await self._request("GET", "/health", auth=False))
 
+    async def health_detailed(self) -> dict[str, Any]:
+        """`GET /health/detailed` (Bearer): readiness checks (disk, gateway, …)."""
+        data = await self._request("GET", "/health/detailed")
+        if not isinstance(data, dict):
+            raise HermesError(200, "invalid_shape", "health/detailed is not an object")
+        return data
+
     async def capabilities(self) -> dict[str, Any]:
         data = await self._request("GET", "/v1/capabilities")
         if not isinstance(data, dict):

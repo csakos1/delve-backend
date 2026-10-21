@@ -1,19 +1,23 @@
-"""Command line: `delve-backend [serve]`, `delve-backend pair` and
-`delve-backend token {create,list,revoke}`.
+"""Command line: `delve-backend [serve]`, `delve-backend pair`,
+`delve-backend token {create,list,revoke}` and `delve-backend helper <verb>`.
 
 The token commands only need the database (DELVE_DATABASE_URL), like Alembic, so they
-work without the Hermes key in the environment.
+work without the Hermes key in the environment. `helper` talks to the privileged helper's
+socket (DELVE_HELPER_SOCKET) exactly as the server does - `sudo delve helper gpu.status`
+checks the socket, its group and the helper in one go.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import uuid
 from collections.abc import Sequence
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
@@ -24,6 +28,7 @@ from delve.db.models import Device
 from delve.db.session import make_engine, make_sessionmaker
 
 DEFAULT_DB_URL = "postgresql+asyncpg:///delve?host=/run/postgresql"
+HELPER_VERBS = ("llama.status", "hermes.status", "gpu.status", "llama.start", "llama.stop")
 
 
 def _db_url() -> str:
@@ -128,6 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
     tsub.add_parser("list", help="list devices")
     revoke = tsub.add_parser("revoke", help="revoke a device")
     revoke.add_argument("device_id")
+    helper = sub.add_parser("helper", help="ask the privileged helper (as the backend would)")
+    helper.add_argument("verb", choices=HELPER_VERBS)
     return parser
 
 
@@ -152,10 +159,29 @@ def _db_name() -> str:
         return "?"
 
 
+async def _helper(verb: str) -> int:
+    from delve.system import CONTROL_TIMEOUT_S, STATUS_TIMEOUT_S, HelperClient, HelperFailed
+
+    path = Path(os.environ.get("DELVE_HELPER_SOCKET", "/run/delve-helper.sock"))
+    timeout = CONTROL_TIMEOUT_S if verb in ("llama.start", "llama.stop") else STATUS_TIMEOUT_S
+    try:
+        data = await HelperClient(path).call(verb, timeout_s=timeout)
+    except HelperFailed as exc:
+        print(f"helper: {exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # HelperUnavailable and anything unexpected, one line
+        print(f"helper not reachable at {path}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(data, indent=1))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command in (None, "serve"):
         return _serve()
+    if args.command == "helper":
+        return asyncio.run(_helper(args.verb))
     try:
         return _db_commands(args)
     except ProgrammingError as exc:

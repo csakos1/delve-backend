@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from delve import API_REVISION, REVISION, __version__
 from delve.api import devices, rest, ws
+from delve.api import system as system_api
 from delve.cards.ingest import CardIngester
 from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
@@ -24,6 +25,7 @@ from delve.llama import LlamaClient
 from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
+from delve.system import HelperClient, SystemService
 
 log = logging.getLogger("delve.app")
 
@@ -36,9 +38,10 @@ def create_app(
     run_worker: bool = True,
     timing: Timing | None = None,
     push_transport: httpx.AsyncBaseTransport | None = None,
+    system_options: dict[str, float] | None = None,
 ) -> FastAPI:
-    """`hermes_transport`, `llama_transport`, `run_worker`, `timing` and `push_transport`
-    exist for tests."""
+    """`hermes_transport`, `llama_transport`, `run_worker`, `timing`, `push_transport` and
+    `system_options` (SystemService timings) exist for tests."""
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -80,7 +83,19 @@ def create_app(
             sessionmaker, hub, settings.cards_path, poll_s=settings.cards_poll_s
         )
         app.state.card_ingester = ingester
+        system = SystemService(
+            sessionmaker,
+            manager,
+            hub,
+            hermes,
+            llama,
+            HelperClient(settings.helper_socket),
+            start_wait_s=settings.llama_start_wait_s,
+            **(system_options or {}),
+        )
+        app.state.system = system
         if run_worker:
+            await system.start()  # before the worker: a held queue must not start a run
             await manager.start()
             await ingester.start()
         log.info(
@@ -91,6 +106,7 @@ def create_app(
             yield
         finally:
             await ingester.close()
+            await system.close()
             await manager.close()
             await push.close()
             await hermes.aclose()
@@ -111,6 +127,7 @@ def create_app(
     app.state.presence = Presence()
     app.include_router(rest.router)
     app.include_router(devices.router)
+    app.include_router(system_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

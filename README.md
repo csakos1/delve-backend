@@ -31,6 +31,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 7 | Pairing with a one-time code, FCM token, status for the app | done |
 | 8 | Push notifications (FCM), per-device notification settings, list preview | done |
 | 9 | Card ingest from the agent's `events.jsonl`, `GET /cards`, `card.new`, water-level push | done |
+| 10 | System view (Hermes, llama-server, GPUs, queue), llama-server stop/start with a held queue | done |
 
 ## Development
 
@@ -124,6 +125,8 @@ needs `Authorization: Bearer <device token>`.
 | `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
 | `GET` | `/api/v1/cards?type=&since=&limit=` | cards newest first (`ts`); `since` with a timezone |
 | `GET` | `/api/v1/runs/open` | the queue: active run first, then queued ones; each with `position` (runs ahead) |
+| `GET` | `/api/v1/system` | the `system` view (below); one answer is reused for 2 s |
+| `POST` | `/api/v1/system/llama` | `{action: start\|stop, force?}` → the `system` view; 409 `run_active` (stop without `force` while a run is active), 503 `helper_unavailable`, 502 `helper_failed` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -152,7 +155,7 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
-`health.status`, `card.new`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`health.status`, `card.new`, `system.updated`, `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -236,6 +239,37 @@ NOTHING` on the card id) in one transaction with the new offset. A new card is p
 as `card.new` (the `card` shape). A shorter file or a new inode starts over from 0; invalid
 lines are logged and skipped. History is ingested too (the payload's time bounds are taken
 relative to the card's own `ts`).
+
+### System
+
+`GET /api/v1/system` (and the `system.updated` event, after a stop/start and when the queue
+is released) is one object:
+
+| Key | Content |
+|---|---|
+| `checked_at` | when it was put together |
+| `helper` | `{ok, error}`: the privileged helper answered every question (`error`: the first problem, e.g. `helper_unavailable`) |
+| `hermes` | `{status: ok\|degraded\|down\|unknown, version, since, issues: [{check, status, detail}]}` - `degraded` and `issues` from `/health/detailed` (e.g. `disk`, `96% used`); `since`: the gateway unit's start |
+| `llama` | `{status, intent, since, model, quant, ctx, slots, slots_busy, gen_tps}`; `status`: `running`, `loading` (unit active, `/health` 503), `starting`, `stopping`, `stopped`, `failed`, `down` (no helper and no answer), `unknown`; `intent`: `stopped` (stopped from here) or `starting` (started, model loading), else `null`; `since`: the unit's last start (running) or stop; `model`/`quant`/`ctx` from `/props` (file name only, never the path); `gen_tps`: the last completed run's generation speed |
+| `queue` | `{active, queued}` runs |
+| `gpus` | `[{index, name, temp_c, mem_used_mib, mem_total_mib, util_pct, power_w, power_limit_w}]` from `nvidia-smi`, `null` without the helper; a value the driver does not report is `null` |
+
+The unit has no capabilities, no devices and its own user namespace, so the unit states,
+`nvidia-smi` and starting/stopping llama-server go through the privileged helper of
+delve-infra (`bin/delve-helper`, socket-activated on `DELVE_HELPER_SOCKET`,
+`/run/delve-helper.sock`, group `delve`): one JSON line per connection, fixed verbs
+`llama.status|start|stop`, `hermes.status`, `gpu.status`. `sudo delve helper <verb>` asks it
+the same way the server does. Without the helper the view still answers (`helper.ok:
+false`, llama state from `/health`, no GPUs) and stop/start answer 503.
+
+**Stopping** holds the run queue first, then: with an active run and no `force` → 409
+(nothing changes); with `force` the active run is stopped (`cancelled`), then llama-server.
+Queued runs - and messages sent meanwhile - **wait** instead of failing; the intent is
+stored (`system_state['llama_intent']`) and holds the queue across a backend restart.
+**Starting** keeps the queue held until llama `/health` answers 200
+(`DELVE_LLAMA_START_WAIT_S`, 180 s, then it lets go anyway). A llama-server started
+elsewhere (terminal, reboot) releases the queue within 15 s. A llama-server that dies
+without being stopped from here is not held for: runs fail as before.
 
 ### Push notifications
 

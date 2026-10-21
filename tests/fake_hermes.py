@@ -97,6 +97,7 @@ class FakeHermes:
         self.requests: list[Recorded] = []
         self.fail_next: list[tuple[int, dict[str, Any]]] = []  # never applied to /health
         self.health_down = False
+        self.detailed: dict[str, Any] = load_json("system/hermes-health-detailed.json")
         self.app = self._build()
 
     # --- scripting ----------------------------------------------------------
@@ -151,6 +152,10 @@ class FakeHermes:
         @app.get("/health")
         async def health() -> dict[str, Any]:
             return {**load_json("protocol/health.json"), "version": fake.version}
+
+        @app.get("/health/detailed")
+        async def health_detailed() -> dict[str, Any]:
+            return fake.detailed
 
         @app.get("/v1/capabilities")
         async def capabilities() -> dict[str, Any]:

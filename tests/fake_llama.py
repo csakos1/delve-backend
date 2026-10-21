@@ -1,4 +1,4 @@
-"""In-process fake of llama-server's `/slots` and `/metrics`, with settable state."""
+"""In-process fake of llama-server's `/slots`, `/metrics`, `/health` and `/props`."""
 
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ class FakeLlama:
         }
         self.down = False
         self.slot_reads = 0
+        # /health: "ok" -> 200, "loading" -> 503, "gone" -> 500 (the client: unavailable)
+        self.health = "ok"
+        self.props: dict[str, Any] = load_json("system/llama-props.json")
         self.app = self._build()
 
     def set(self, *, task: int, processing: bool, tokens: int, decoded: int = 0) -> None:
@@ -46,6 +49,17 @@ class FakeLlama:
             if fake.down:
                 return JSONResponse({"error": "down"}, status_code=503)
             return JSONResponse([fake.slot])
+
+        @app.get("/health")
+        async def health() -> Response:
+            code = {"ok": 200, "loading": 503}.get(fake.health, 500)
+            return JSONResponse({"status": fake.health}, status_code=code)
+
+        @app.get("/props")
+        async def props() -> Response:
+            if fake.health != "ok":
+                return JSONResponse({"error": fake.health}, status_code=503)
+            return JSONResponse(fake.props)
 
         @app.get("/metrics")
         async def metrics() -> Response:

@@ -1,0 +1,77 @@
+{
+ "llama.status/running": {
+  "active_state": "active",
+  "sub_state": "running",
+  "result": "success",
+  "active_since": 1792537434,
+  "inactive_since": 1792535668,
+  "main_pid": 1858856,
+  "restarts": 0
+ },
+ "llama.status/stopped": {
+  "active_state": "inactive",
+  "sub_state": "dead",
+  "result": "success",
+  "active_since": 1792535325,
+  "inactive_since": 1792535668,
+  "main_pid": null,
+  "restarts": 0
+ },
+ "hermes.status/running": {
+  "active_state": "active",
+  "sub_state": "running",
+  "result": "success",
+  "active_since": 1792535518,
+  "inactive_since": null,
+  "main_pid": 1816202,
+  "restarts": 0
+ },
+ "gpu.status/running": {
+  "gpus": [
+   {
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 4070 SUPER",
+    "temp_c": 51.0,
+    "mem_used_mib": 11381,
+    "mem_total_mib": 12282,
+    "util_pct": 6.0,
+    "power_w": 40.39,
+    "power_limit_w": 220.0
+   },
+   {
+    "index": 1,
+    "name": "NVIDIA GeForce RTX 3050",
+    "temp_c": 49.0,
+    "mem_used_mib": 6693,
+    "mem_total_mib": 8192,
+    "util_pct": 0.0,
+    "power_w": 14.52,
+    "power_limit_w": 130.0
+   }
+  ]
+ },
+ "gpu.status/stopped": {
+  "gpus": [
+   {
+    "index": 0,
+    "name": "NVIDIA GeForce RTX 4070 SUPER",
+    "temp_c": 52.0,
+    "mem_used_mib": 1266,
+    "mem_total_mib": 12282,
+    "util_pct": 4.0,
+    "power_w": 37.67,
+    "power_limit_w": 220.0
+   },
+   {
+    "index": 1,
+    "name": "NVIDIA GeForce RTX 3050",
+    "temp_c": 48.0,
+    "mem_used_mib": 15,
+    "mem_total_mib": 8192,
+    "util_pct": 0.0,
+    "power_w": 14.51,
+    "power_limit_w": 130.0
+   }
+  ]
+ }
+}

@@ -9,3 +9,9 @@ commit above in the same change.
 
 `llama/slots-run.jsonl` (a `/slots` + `/metrics` series over three live runs) was added at
 `delve-infra` commit `318000e`.
+
+`system/llama-props.json` and `system/hermes-health-detailed.json` (B3) are copied from
+`delve-infra` `tests/fixtures/system/`. `system/helper-responses.json` is what the helper
+answers for those samples: the `data` of `bin/delve-helper`'s `parse_show` / `parse_gpus`
+run over `llama-show-*.txt`, `hermes-show-running.txt` and `gpu-*.csv` there, keyed
+`<verb>/<state>`. Regenerate it when the helper's output changes.

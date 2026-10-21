@@ -15,6 +15,7 @@ from typing import Any
 
 from delve import API_REVISION, protocol
 from delve.db.models import Approval, Card, Conversation, Message, Run, ToolStep
+from delve.llama import Props
 from delve.serialize import (
     approval_out,
     card_out,
@@ -23,6 +24,7 @@ from delve.serialize import (
     run_out,
     step_out,
 )
+from delve.system import Parts, gpu_out, hermes_issues, system_out
 
 _T = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -48,6 +50,15 @@ def shapes() -> dict[str, Any]:
     step = ToolStep(id=1, run_id="r", tool="terminal", status="running")
     card = Card(id="k", v=1, type="water", severity="info", ts=_T, origin="script",
                 payload={}, received_at=_T)  # fmt: skip
+    system = _keys(
+        system_out(
+            Parts(checked_at=_T, hermes_ok=True, props=Props("m", "q", 1, 1),
+                  llama_unit={"active_state": "active"}, llama_healthy=True, gpus=[])
+        )
+    )  # fmt: skip
+    system["hermes"]["issues"] = "hermes_issue[]"
+    system["gpus"] = "gpu[]|null"
+    issue = hermes_issues({"readiness": {"checks": {"disk": {"status": "degraded"}}}})[0]
     return {
         "conversation": _keys(conversation_out(conv)),
         "message": _keys(message_out(msg)),
@@ -57,6 +68,10 @@ def shapes() -> dict[str, Any]:
         "tool_step": {**_keys(step_out(step)), "approval": "approval|null"},
         # payload: per type, plan 5 (water: station, level_cm, measured_at, …)
         "card": {**_keys(card_out(card)), "payload": "object"},
+        # B3: GET /api/v1/system and the system.updated event
+        "system": system,
+        "gpu": _keys(gpu_out({})),
+        "hermes_issue": _keys(issue),
     }
 
 

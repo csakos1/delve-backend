@@ -1,12 +1,16 @@
-"""Read-only client for llama-server's `/slots` and `/metrics` (plan 6.13).
+"""Read-only client for llama-server's `/slots`, `/metrics`, `/health` and `/props`.
 
-The backend never controls generation through this; it only samples the slot to measure
-context fill and reads the Prometheus counters for per-run throughput.
+The backend never controls generation through this; it samples the slot to measure
+context fill, reads the Prometheus counters for per-run throughput (plan 6.13) and shows
+the model and its state in the system view (B3). Starting and stopping the server goes
+through the privileged helper (`delve.system`).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 import httpx
@@ -44,6 +48,53 @@ class Slot:
             tokens=int(raw["n_prompt_tokens"]),
             decoded=int(first.get("n_decoded") or 0),
             n_ctx=int(raw["n_ctx"]),
+        )
+
+
+_GGUF_NAME = re.compile(
+    r"^(?P<name>.+?)-(?:UD-)?(?P<quant>(?:I?Q\d\w*|BF16|F16|F32))$", re.IGNORECASE
+)
+
+
+def model_label(path: str, ftype: str | None = None) -> tuple[str, str | None]:
+    """`…/Qwen3.8-27B-UD-IQ4_XS.gguf` -> ("Qwen3.8-27B", "IQ4_XS").
+
+    Only the file name leaves the backend, never the path (it names the operator's home).
+    """
+    stem = PurePosixPath(path).name
+    if stem.lower().endswith(".gguf"):
+        stem = stem[: -len(".gguf")]
+    m = _GGUF_NAME.match(stem)
+    if m:
+        return m["name"], m["quant"].upper()
+    quant = ftype.split(" ", 1)[0] if ftype else None  # "IQ4_XS - 4.25 bpw"
+    return stem, quant or None
+
+
+@dataclass(frozen=True, slots=True)
+class Props:
+    """What the system view shows from `/props` (fixture `system/llama-props.json`)."""
+
+    model: str
+    quant: str | None
+    n_ctx: int | None
+    slots: int | None
+
+    @classmethod
+    def parse(cls, raw: dict[str, Any]) -> Props:
+        path = raw.get("model_path") or raw.get("model_alias")
+        if not isinstance(path, str) or not path:
+            raise KeyError("model_path")
+        ftype = raw.get("model_ftype")
+        name, quant = model_label(path, ftype if isinstance(ftype, str) else None)
+        dgs = raw.get("default_generation_settings")
+        n_ctx = dgs.get("n_ctx") if isinstance(dgs, dict) else None
+        slots = raw.get("total_slots")
+        return cls(
+            model=name,
+            quant=quant,
+            n_ctx=n_ctx if isinstance(n_ctx, int) else None,
+            slots=slots if isinstance(slots, int) else None,
         )
 
 
@@ -98,3 +149,22 @@ class LlamaClient:
 
     async def metrics(self) -> dict[str, float]:
         return parse_metrics((await self._get("/metrics")).text)
+
+    async def health(self) -> bool:
+        """True once the model is loaded; False while it loads (503)."""
+        try:
+            r = await self._http.get("/health")
+        except httpx.HTTPError as exc:
+            raise LlamaUnavailable(f"/health: {type(exc).__name__}") from exc
+        if r.status_code == 200:
+            return True
+        if r.status_code == 503:
+            return False
+        raise LlamaUnavailable(f"/health: HTTP {r.status_code}")
+
+    async def props(self) -> Props:
+        r = await self._get("/props")
+        try:
+            return Props.parse(r.json())
+        except (ValueError, KeyError, TypeError) as exc:
+            raise LlamaUnavailable(f"/props: unexpected body ({type(exc).__name__})") from exc

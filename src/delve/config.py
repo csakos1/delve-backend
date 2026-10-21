@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     )
 
     # --- HTTP server ---
+    # B3: privileged helper (delve-infra bin/delve-helper, delve-helper.socket)
+    helper_socket: Path = Field(
+        default=Path("/run/delve-helper.sock"), validation_alias=_env("DELVE_HELPER_SOCKET")
+    )
+    llama_start_wait_s: Annotated[float, Field(gt=0, le=1800)] = Field(
+        default=180.0, validation_alias=_env("DELVE_LLAMA_START_WAIT_S")
+    )
+
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")
