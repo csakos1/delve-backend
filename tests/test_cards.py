@@ -281,7 +281,7 @@ async def test_water_push(
         await push.close()
     (msg,) = google.sends  # only the new scheduled reading, only where water is on
     assert msg["token"] == "fcm-on"
-    assert msg["android"] == {"priority": "NORMAL", "ttl": f"{12 * 3600}s", "collapse_key": "water"}
+    assert msg["android"] == {"priority": "HIGH", "ttl": f"{12 * 3600}s", "collapse_key": "water"}
     d = msg["data"]
     assert (d["kind"], d["card_id"], d["station"], d["level_cm"], d["lake_avg_cm"]) == (
         "card",

@@ -282,8 +282,11 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 |---|---|---|
 | `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
 | `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
-| `card` | `card_id, type, severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; collapse key `water` |
-| `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | to devices **without a live WebSocket**, for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always) |
+| `card` | `card_id, type, severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
+| `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | to devices **without a live WebSocket**, for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always); high priority |
+
+Every kind goes with high priority: a normal-priority message waits while the phone
+dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within

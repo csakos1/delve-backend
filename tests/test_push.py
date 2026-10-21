@@ -381,7 +381,8 @@ async def test_run_done(rig: Rig) -> None:
     await h.mgr.start()
     await rig.drain()
     (msg,) = rig.google.sends
-    assert msg["token"] == "fcm-pixel" and msg["android"]["priority"] == "NORMAL"
+    # HIGH: a NORMAL message waits while the phone dozes (shown when it wakes)
+    assert msg["token"] == "fcm-pixel" and msg["android"]["priority"] == "HIGH"
     run_id = load_json("protocol/e1.create.json")["run_id"]
     assert msg["data"] == {
         "kind": "run_done",

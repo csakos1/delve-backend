@@ -18,6 +18,12 @@ Kinds (every value is a string, as FCM requires):
   station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at`
   (empty when unknown). Not for cards older than an hour (history on first ingest).
 
+Priority: every kind goes as HIGH. A NORMAL message waits while the phone dozes -
+screen off, lying still - until a maintenance window or until it wakes, so a 08:52 water
+reading showed up when the app was opened minutes later. FCM deprioritizes HIGH messages
+that show nothing; each of these shows a notification or removes one it showed
+(`approval_resolved`, which must not leave a stale approval on the lock screen).
+
 Who gets what is per device (`devices.notify`, `PATCH /api/v1/devices/me`). An
 `UNREGISTERED` answer clears the device's FCM token. Every send is logged in `push_log`.
 
@@ -478,7 +484,7 @@ class PushService:
             "preview": clip(answer, PREVIEW_CHARS),
         }
         await self._send(
-            "run_done", "run_done", run_id, data, high=False, ttl_s=RUN_DONE_TTL_S,
+            "run_done", "run_done", run_id, data, high=True, ttl_s=RUN_DONE_TTL_S,
             collapse_key=None, skip_live=True,
         )  # fmt: skip
 
@@ -496,7 +502,7 @@ class PushService:
             **{k: _text(p.get(k)) for k in WATER_PUSH_FIELDS},
         }
         await self._send(
-            "water", "card", card_id, data, high=False, ttl_s=CARD_TTL_S,
+            "water", "card", card_id, data, high=True, ttl_s=CARD_TTL_S,
             collapse_key="water",
         )  # fmt: skip
 
