@@ -32,7 +32,7 @@ from zoneinfo import ZoneInfo
 
 from cronsim import CronSim, CronSimError
 from cronsim.explain import explain
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -253,7 +253,12 @@ class ScheduleService:
                 enabled=True,
             )
             .on_conflict_do_nothing(
-                index_elements=[Schedule.kind], index_where=Schedule.kind == "brief"
+                # A literal predicate: as a bind parameter (`kind = $7`) it matches the partial
+                # unique index only while Postgres plans the statement per call; from the 6th
+                # run on a connection the generic plan cannot infer the index ("no unique or
+                # exclusion constraint matching the ON CONFLICT specification").
+                index_elements=[Schedule.kind],
+                index_where=text("kind = 'brief'"),
             )
         )
         async with self._sm() as s:
@@ -517,6 +522,11 @@ class ScheduleService:
             nxt: datetime | None = None
             try:
                 await self.ensure_brief()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # never let it hold back the schedules that exist
+                log.exception("morning brief schedule not ensured")
+            try:
                 nxt = await self.tick()
             except asyncio.CancelledError:
                 raise

@@ -227,6 +227,36 @@ async def test_brief_is_seeded_once_and_listed_first(sx: Env) -> None:
 
 
 @pg
+async def test_brief_seed_survives_generic_plans(sx: Env) -> None:
+    # Postgres switches a prepared statement to a generic plan after 5 runs on a
+    # connection; the ON CONFLICT predicate must still find the partial unique index.
+    for _ in range(8):
+        await sx.svc.ensure_brief()
+    async with sx.h.db() as s:
+        kinds = list((await s.execute(select(Schedule.kind))).scalars())
+    assert kinds == ["brief"]
+
+
+@pg
+async def test_loop_fires_even_when_the_brief_seed_fails(
+    sx: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await sx.svc.create(PROMPT)
+    sx.clock.at = local(2026, 10, 21, 9, 0, 10)
+
+    async def broken() -> None:
+        raise RuntimeError("seed failed")
+
+    monkeypatch.setattr(sx.svc, "ensure_brief", broken)
+    await sx.svc.start()
+    async with asyncio.timeout(5):
+        while not await sx.runs():  # noqa: ASYNC110 - polling state the test does not own
+            await asyncio.sleep(0.02)
+    (run,) = await sx.runs()
+    assert run.origin == "schedule"
+
+
+@pg
 async def test_create_validates(sx: Env) -> None:
     cases = [
         ({**PROMPT, "cron": "*/5 * * * *"}, "too_frequent"),
