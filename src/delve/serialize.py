@@ -55,7 +55,8 @@ def conversation_out(c: Conversation) -> dict[str, Any]:
     }
 
 
-def message_out(m: Message) -> dict[str, Any]:
+def message_out(m: Message, attachments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """`attachments`: the message's attachment_out() list (B6); empty for most messages."""
     return {
         "id": m.id,
         "conversation_id": m.conversation_id,
@@ -67,6 +68,7 @@ def message_out(m: Message) -> dict[str, Any]:
         "status": m.status,
         "client_msg_id": str(m.client_msg_id) if m.client_msg_id else None,
         "created_at": iso(m.created_at),
+        "attachments": attachments or [],
     }
 
 

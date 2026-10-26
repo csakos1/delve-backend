@@ -75,7 +75,7 @@ CLIENT_FRAMES: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
     "hello": (frozenset({"device_token"}), frozenset({"last_seq", "epoch"})),
     "chat.send": (
         frozenset({"text", "client_msg_id"}),
-        frozenset({"conversation_id", "thinking"}),
+        frozenset({"conversation_id", "thinking", "attachment_ids"}),
     ),
     "conversation.set": (frozenset({"conversation_id"}), frozenset({"thinking", "archived"})),
     "run.stop": (frozenset({"run_id"}), frozenset()),

@@ -1,5 +1,5 @@
 {
-  "api_revision": 7,
+  "api_revision": 8,
   "rest": [
     {
       "method": "GET",
@@ -12,6 +12,24 @@
     {
       "method": "POST",
       "path": "/api/v1/approvals/{request_id}",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/attachments",
+      "query": [
+        "filename",
+        "kind"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/attachments/{attachment_id}",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/attachments/{attachment_id}/copy",
       "query": []
     },
     {
@@ -176,6 +194,7 @@
       "updated_at": true
     },
     "message": {
+      "attachments": "attachment[]",
       "client_msg_id": true,
       "content": true,
       "conversation_id": true,
@@ -186,6 +205,16 @@
       "role": true,
       "run_id": true,
       "status": true
+    },
+    "attachment": {
+      "available": true,
+      "created_at": true,
+      "filename": true,
+      "id": true,
+      "kind": true,
+      "message_id": true,
+      "mime": true,
+      "size_bytes": true
     },
     "run": {
       "conversation_id": true,
@@ -407,6 +436,7 @@
           "text"
         ],
         "optional": [
+          "attachment_ids",
           "conversation_id",
           "thinking"
         ]

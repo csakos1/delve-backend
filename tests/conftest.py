@@ -34,6 +34,9 @@ BASE_ENV = {
     # (test_stats drives the sampler itself)
     "DELVE_HELPER_SOCKET": "/nonexistent/delve-helper.sock",
     "DELVE_STATS_SAMPLE_S": "0",
+    # never the machine's real state or inbox directories (test_attachments uses tmp_path)
+    "DELVE_ATTACHMENTS_DIR": "/nonexistent/delve-attachments",
+    "DELVE_INBOX_DIR": "/nonexistent/delve-inbox",
 }
 
 

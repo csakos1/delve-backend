@@ -9,7 +9,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from delve.db.models import Approval, Message, ToolStep
+from delve.attachments import attachment_out
+from delve.db.models import Approval, Attachment, Message, ToolStep
 from delve.serialize import message_out, step_out
 
 
@@ -35,9 +36,20 @@ async def messages_with_steps(s: AsyncSession, msgs: Sequence[Message]) -> list[
             }
         for t in found:
             by_run[t.run_id].append(step_out(t, approvals.get(t.approval_request_id or "")))
+    user_ids = [m.id for m in msgs if m.role == "user"]
+    files: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    if user_ids:
+        for a in (
+            await s.execute(
+                select(Attachment)
+                .where(Attachment.message_id.in_(user_ids))
+                .order_by(Attachment.created_at, Attachment.id)
+            )
+        ).scalars():
+            files[a.message_id or 0].append(attachment_out(a))
     out = []
     for m in msgs:
-        item = message_out(m)
+        item = message_out(m, files.get(m.id))
         if m.role == "assistant":
             item["tool_steps"] = by_run.get(m.run_id or "", [])
         out.append(item)

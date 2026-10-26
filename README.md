@@ -34,6 +34,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 10 | System view (Hermes, llama-server, GPUs, queue), llama-server stop/start with a held queue | done |
 | 11 | Schedules (cron, catch-up, run now) and the morning brief card; brief push | done |
 | 12 | Observability: run, approval and token series, GPU sampling, retention cleanup | done |
+| 13 | Attachments: image and file uploads, images into the run, files through the agent's inbox | done |
 
 ## Development
 
@@ -135,6 +136,9 @@ needs `Authorization: Bearer <device token>`.
 | `DELETE` | `/api/v1/schedules/{id}` | → 204; the brief: 409 `brief_fixed` |
 | `POST` | `/api/v1/schedules/{id}/run` | fire once now (timing unchanged) → `{schedule, run_id, card_id}` |
 | `GET` | `/api/v1/stats?range=24h\|7d\|30d` | the Observability view (below); 422 for another range |
+| `POST` | `/api/v1/attachments?kind=image\|file&filename=` | the raw bytes as the body, the type in `Content-Type` → 201 `attachment`; 413 `too_large`, 415 `unsupported_image`, 422 `empty` |
+| `GET` | `/api/v1/attachments/{id}` | the bytes (images `inline`, files `attachment`); 404 `attachment_not_found`, 410 `attachment_gone` |
+| `POST` | `/api/v1/attachments/{id}/copy` | a new, unsent upload with the same content ("send again") → 201 `attachment`; 410 `attachment_gone` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -152,7 +156,7 @@ from the last thinking run (whether Hermes used the thinking provider), or `null
 
 | Client frame | Reply |
 |---|---|
-| `chat.send {text, client_msg_id, conversation_id?, thinking?}` | `ack {conversation_id, message_id, run_id, replayed}` |
+| `chat.send {text, client_msg_id, conversation_id?, thinking?, attachment_ids?}` | `ack {conversation_id, message_id, run_id, replayed}`; with attachments `text` may be empty |
 | `conversation.set {conversation_id, thinking?, archived?}` | `ack {conversation}` |
 | `run.stop {run_id}` (queue id or Hermes id) | `ack {status}` |
 | `approval.respond {request_id, choice}` | `ack {approval}` |
@@ -342,6 +346,31 @@ and memory per GPU. `sampling` = `{interval_s, ok, error, last_at}` says whether
 (a failure is logged once per kind). Once an hour the same loop deletes samples older than
 `DELVE_GPU_RETENTION_DAYS` (30) and `push_log` rows older than
 `DELVE_PUSH_LOG_RETENTION_DAYS` (90). Runs, approvals and messages are kept.
+
+### Attachments
+
+Up to four per message. The app uploads each one first (`POST /api/v1/attachments`, one
+file per request, no multipart), then lists the ids in `chat.send`; the send binds them to
+its user message in the same transaction and fails as a whole otherwise:
+`too_many_attachments`, `duplicate_attachment`, `attachment_not_found`,
+`attachment_gone`, `attachment_used` (an id can be sent once; `…/copy` makes a new one).
+User messages from REST, `sync` and `message.created` carry `attachments`
+(`[attachment]`: `{id, kind, mime, filename, size_bytes, message_id, available, created_at}`);
+other messages have an empty list.
+
+| Kind | Accepted | Stored | How the agent gets it |
+|---|---|---|---|
+| `image` | `image/jpeg`, `image/png`, `image/webp`, checked against the bytes; at most 1.5 MiB (the app sends 1536 px JPEG 85) | `DELVE_ATTACHMENTS_DIR/<id>.<ext>` (`/var/lib/delve/attachments`) | in the run's input: one user message whose content is the text plus `image_url` parts with `data:` URLs (needs `model.supports_vision: true` in Hermes) |
+| `file` | any type, at most 20 MiB | `DELVE_INBOX_DIR/<id>/<name>` (`/var/lib/delve-inbox`, 2750 `delve:agent`, delve-infra) | a line in the run's `instructions` with the path, type and size; the agent reads it with its own tools |
+
+Four images stay under the Hermes API server's 10 MB request limit after base64. The
+image is encoded once per run (a tool round reuses the KV cache). Hermes keeps only a
+placeholder for an image in the session history, so every later run of a conversation
+that had images gets a note in its `instructions`: the model no longer sees them and asks
+for them again instead of guessing. An attachment that is gone when its run starts becomes
+a line saying so. Uploads that are never sent are dropped after an hour; the files of sent
+ones are deleted after `DELVE_ATTACHMENT_RETENTION_DAYS` (14) and the row stays with
+`available: false`.
 
 ### Push notifications
 

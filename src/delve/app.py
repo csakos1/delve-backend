@@ -14,10 +14,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from delve import API_REVISION, REVISION, __version__
+from delve.api import attachments as attachments_api
 from delve.api import devices, rest, ws
 from delve.api import schedules as schedules_api
 from delve.api import stats as stats_api
 from delve.api import system as system_api
+from delve.attachments import AttachmentStore
 from delve.brief import BriefService
 from delve.cards.ingest import CardIngester
 from delve.config import Settings, get_settings
@@ -61,6 +63,13 @@ def create_app(
         )
         llama = LlamaClient(settings.llama_base_url, transport=llama_transport)
         hub = EventHub(validate=True)
+        attachments = AttachmentStore(
+            sessionmaker,
+            images_dir=settings.attachments_dir,
+            inbox_dir=settings.inbox_dir,
+            retention_days=settings.attachment_retention_days,
+        )
+        app.state.attachments = attachments
         manager = RunManager(
             sessionmaker,
             hermes,
@@ -69,6 +78,7 @@ def create_app(
             approval_timeout_s=settings.hermes_approval_timeout_s,
             expected_version=settings.hermes_expected_version,
             llama=llama,
+            attachments=attachments,
         )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
@@ -123,6 +133,7 @@ def create_app(
             await ingester.start()
             await schedules.start()
             await stats.start()
+            await attachments.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -130,6 +141,7 @@ def create_app(
         try:
             yield
         finally:
+            await attachments.close()
             await stats.close()
             await schedules.close()
             await ingester.close()
@@ -157,6 +169,7 @@ def create_app(
     app.include_router(system_api.router)
     app.include_router(schedules_api.router)
     app.include_router(stats_api.router)
+    app.include_router(attachments_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

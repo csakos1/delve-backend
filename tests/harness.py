@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from delve.attachments import AttachmentStore
 from delve.db.models import TERMINAL_RUN_STATUSES, Message, Run
 from delve.events import Envelope, EventHub, Subscription
 from delve.hermes.client import HermesClient, ThinkingRoute
@@ -94,6 +95,7 @@ async def make_harness(
     *,
     llama: LlamaClient | None = None,
     timing: Timing = FAST,
+    attachments: AttachmentStore | None = None,
 ) -> AsyncIterator[Harness]:
     fake = FakeHermes()
     hermes = HermesClient(
@@ -101,7 +103,7 @@ async def make_harness(
     )
     hub = EventHub(validate=True)
     sub = hub.subscribe()
-    mgr = RunManager(db, hermes, hub, timing=timing, llama=llama)
+    mgr = RunManager(db, hermes, hub, timing=timing, llama=llama, attachments=attachments)
     try:
         yield Harness(fake, hermes, hub, sub, mgr, db)
     finally:

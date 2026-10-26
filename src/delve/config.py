@@ -76,8 +76,16 @@ class Settings(BaseSettings):
     cards_poll_s: Annotated[float, Field(gt=0)] = Field(
         default=2.0, validation_alias=_env("DELVE_CARDS_POLL_S")
     )
+    # B6: attachments. Images in the backend's state directory; files in the inbox the
+    # agent reads (2750 delve:agent, delve-infra); both deleted after the retention.
     inbox_dir: Path = Field(
         default=Path("/var/lib/delve-inbox"), validation_alias=_env("DELVE_INBOX_DIR")
+    )
+    attachments_dir: Path = Field(
+        default=Path("/var/lib/delve/attachments"), validation_alias=_env("DELVE_ATTACHMENTS_DIR")
+    )
+    attachment_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=14, validation_alias=_env("DELVE_ATTACHMENT_RETENTION_DAYS")
     )
 
     # --- HTTP server ---

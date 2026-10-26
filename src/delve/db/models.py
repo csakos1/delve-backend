@@ -143,9 +143,8 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    conversation_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("conversations.id"), nullable=False
-    )
+    # both NULL until chat.send binds the upload to its message (B6, migration 0009)
+    conversation_id: Mapped[str | None] = mapped_column(Text, ForeignKey("conversations.id"))
     message_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("messages.id"))
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     mime: Mapped[str] = mapped_column(Text, nullable=False)
@@ -157,7 +156,11 @@ class Attachment(Base):
     created_at: Mapped[datetime] = _now()
     deleted_at: Mapped[datetime | None] = mapped_column(TZ)
 
-    __table_args__ = (CheckConstraint("kind IN ('image','file')", name="kind"),)
+    __table_args__ = (
+        CheckConstraint("kind IN ('image','file')", name="kind"),
+        Index(None, "message_id"),
+        Index(None, "conversation_id"),
+    )
 
 
 class Run(Base):

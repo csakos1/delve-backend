@@ -28,10 +28,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from delve.attachments import AttachmentStore, RunInput, attachment_out, attachments_preview
 from delve.db.models import (
     ACTIVE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
     Approval,
+    Attachment,
     Conversation,
     Message,
     Run,
@@ -157,9 +159,11 @@ class RunManager:
         approval_timeout_s: int = 300,
         expected_version: str | None = None,
         llama: LlamaClient | None = None,
+        attachments: AttachmentStore | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._llama = llama
+        self._attachments = attachments
         self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
         self._expected_version = expected_version
         self.hermes_ok: bool | None = None  # None until the first health poll
@@ -224,14 +228,19 @@ class RunManager:
         thinking: bool | None = None,
         origin: str = "app",
         schedule_id: uuid.UUID | None = None,
+        attachment_ids: Sequence[uuid.UUID] = (),
     ) -> SubmitResult:
         """Queue a user message as a run.
 
         A scheduled run (`schedule_id` set, origin `schedule`) keeps the schedule's
         `thinking` instead of the conversation's, and a new conversation it opens has
-        origin `schedule`.
+        origin `schedule`. `attachment_ids` (B6) are bound to the message in the same
+        transaction; with attachments the text may be empty. AttachmentError for an
+        attachment the rules refuse.
         """
-        if not text.strip():
+        if attachment_ids and self._attachments is None:
+            raise InvalidRequest("attachments are not available")
+        if not text.strip() and not attachment_ids:
             raise InvalidRequest("empty message")
         if len(text) > MAX_INPUT_CHARS:
             raise InvalidRequest(f"message longer than {MAX_INPUT_CHARS} characters")
@@ -254,7 +263,6 @@ class RunManager:
                 conv = found
                 conv.archived = False
                 conv.updated_at = now()
-            conv.preview = preview_text(text) or conv.preview
             await s.flush()
             run_id = f"q_{uuid.uuid4().hex}"
             msg = Message(
@@ -275,6 +283,13 @@ class RunManager:
                 schedule_id=schedule_id,
             )
             s.add_all([msg, run])
+            bound: list[Attachment] = []
+            if attachment_ids and self._attachments is not None:
+                await s.flush()  # the message id
+                bound = await self._attachments.bind(
+                    s, attachment_ids, conversation_id=conv.id, message_id=msg.id
+                )
+            conv.preview = preview_text(text) or attachments_preview(bound) or conv.preview
             try:
                 await s.commit()
             except IntegrityError:
@@ -285,7 +300,8 @@ class RunManager:
                     raise
                 return prev
             position = await self._position(s, run)
-            conv_out, msg_out = conversation_out(conv), message_out(msg)
+            conv_out = conversation_out(conv)
+            msg_out = message_out(msg, [attachment_out(a) for a in bound])
         self._hub.publish(
             "conversation.created" if created_conv else "conversation.updated", conv_out
         )
@@ -608,15 +624,23 @@ class RunManager:
                 run.thinking = conv.thinking  # the state when the run starts decides the route
             run.status, run.started_at = "starting", run.started_at or now()
             await s.commit()
-            conv_id, thinking, text, key = conv.id, run.thinking, run.input, run.idempotency_key
-            instructions, origin = run.instructions, run.origin
+            conv_id, thinking, key = conv.id, run.thinking, run.idempotency_key
+            origin = run.origin
+            prepared = RunInput(run.input, run.instructions)
+            if self._attachments is not None:  # images and file paths of the message (B6)
+                prepared = await self._attachments.run_input(s, run)
         self.active_run_id = qid
         meter = self._new_meter()
         if meter is not None:
             await meter.prepare()  # before submitting: tasks seen now are not this run's
 
         created = await self._create_with_retry(
-            qid, conv_id, text=text, thinking=thinking, key=key, instructions=instructions
+            qid,
+            conv_id,
+            input=prepared.input,
+            thinking=thinking,
+            key=key,
+            instructions=prepared.instructions,
         )
         if created is None:
             return
@@ -670,7 +694,7 @@ class RunManager:
         qid: str,
         conv_id: str,
         *,
-        text: str,
+        input: str | list[dict[str, Any]],
         thinking: bool,
         key: uuid.UUID,
         instructions: str | None,
@@ -686,7 +710,7 @@ class RunManager:
             try:
                 created = await self._hermes.create_run(
                     session_id=conv_id,
-                    input=text,
+                    input=input,
                     thinking=thinking,
                     idempotency_key=key,
                     instructions=instructions,

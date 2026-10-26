@@ -15,8 +15,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 from delve import API_REVISION, protocol
+from delve.attachments import attachment_out
 from delve.brief import brief_payload
-from delve.db.models import Approval, Card, Conversation, Message, Run, Schedule, ToolStep
+from delve.db.models import (
+    Approval,
+    Attachment,
+    Card,
+    Conversation,
+    Message,
+    Run,
+    Schedule,
+    ToolStep,
+)
 from delve.llama import Props
 from delve.schedules import schedule_out
 from delve.serialize import (
@@ -48,6 +58,8 @@ def shapes() -> dict[str, Any]:
         context_measured_at=_T, tokens_in=0, tokens_out=0, tokens_cache_read=0, preview="p",
     )  # fmt: skip
     msg = Message(id=1, conversation_id="c", run_id="r", role="user", content="", created_at=_T)
+    att = Attachment(id=uuid.UUID(int=2), kind="image", mime="image/jpeg", filename="f.jpg",
+                     size_bytes=1, sha256="0", message_id=1, created_at=_T)  # fmt: skip
     run = Run(run_id="r", conversation_id="c", status="queued", thinking=False, origin="app")
     appr = Approval(request_id="a", run_id="r", conversation_id="c", command="", status="pending",
                     action_class="other", created_at=_T)  # fmt: skip
@@ -79,7 +91,9 @@ def shapes() -> dict[str, Any]:
     brief_keys["missing"] = "string[]"
     return {
         "conversation": _keys(conversation_out(conv)),
-        "message": _keys(message_out(msg)),
+        "message": {**_keys(message_out(msg)), "attachments": "attachment[]"},
+        # B6: POST /api/v1/attachments and each message's `attachments`
+        "attachment": _keys(attachment_out(att)),
         "run": _keys(run_out(run)),
         "open_run": _keys({**run_out(run), "position": 0}),
         "approval": _keys(approval_out(appr)),

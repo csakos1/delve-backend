@@ -219,8 +219,16 @@ def test_ws_commands_and_errors(client: TestClient, token: str, fake: FakeHermes
                 "chat.send",
                 {"text": "x", "client_msg_id": str(uuid.uuid4()), "attachment_ids": ["a"]},
             )["data"]["code"]
-            == "not_implemented"
+            == "invalid_request"
         )
+        assert (
+            call(
+                "chat.send",
+                {"text": "x", "client_msg_id": str(uuid.uuid4()),
+                 "attachment_ids": [str(uuid.uuid4())]},
+            )["data"]["code"]
+            == "attachment_not_found"
+        )  # fmt: skip
         assert (
             call("chat.send", {"text": " ", "client_msg_id": str(uuid.uuid4())})["data"]["code"]
             == "invalid_request"

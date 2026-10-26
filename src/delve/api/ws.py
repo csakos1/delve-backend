@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
+from delve.attachments import MAX_PER_MESSAGE, AttachmentError
 from delve.auth import DeviceIdentity, authenticate
 from delve.db.models import Conversation, Message
 from delve.events import EventHub, Subscription
@@ -218,6 +219,8 @@ async def _handle(
         await _send(ws, _error(fid, "invalid_request", str(exc)))
     except NotFound as exc:
         await _send(ws, _error(fid, "not_found", str(exc)))
+    except AttachmentError as exc:
+        await _send(ws, _error(fid, exc.code, exc.message))
 
 
 async def _chat_send(data: dict[str, Any], mgr: RunManager) -> dict[str, Any]:
@@ -228,8 +231,7 @@ async def _chat_send(data: dict[str, Any], mgr: RunManager) -> dict[str, Any]:
         client_msg_id = uuid.UUID(_required_str(data, "client_msg_id"))
     except ValueError as exc:
         raise ProtocolError("invalid_request", "client_msg_id must be a UUID") from exc
-    if data.get("attachment_ids"):
-        raise ProtocolError("not_implemented", "attachments arrive in a later step")
+    attachment_ids = _attachment_ids(data)
     conv_id = data.get("conversation_id")
     if conv_id is not None and not isinstance(conv_id, str):
         raise ProtocolError("invalid_request", "conversation_id must be a string")
@@ -238,6 +240,7 @@ async def _chat_send(data: dict[str, Any], mgr: RunManager) -> dict[str, Any]:
         client_msg_id=client_msg_id,
         conversation_id=conv_id,
         thinking=_opt_bool(data, "thinking"),
+        attachment_ids=attachment_ids,
     )
     return {
         "conversation_id": result.conversation["id"],
@@ -245,6 +248,22 @@ async def _chat_send(data: dict[str, Any], mgr: RunManager) -> dict[str, Any]:
         "run_id": result.run_id,
         "replayed": not result.created,
     }
+
+
+def _attachment_ids(data: dict[str, Any]) -> list[uuid.UUID]:
+    raw = data.get("attachment_ids")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(i, str) for i in raw):
+        raise ProtocolError("invalid_request", "attachment_ids must be a list of strings")
+    if len(raw) > MAX_PER_MESSAGE:
+        raise ProtocolError(
+            "too_many_attachments", f"at most {MAX_PER_MESSAGE} attachments per message"
+        )
+    try:
+        return [uuid.UUID(i) for i in raw]
+    except ValueError as exc:
+        raise ProtocolError("invalid_request", "attachment_ids must be UUIDs") from exc
 
 
 SYNC_LIMIT = 200
