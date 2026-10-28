@@ -576,3 +576,13 @@ async def test_recorded_cards_and_cron_list(env_: Env) -> None:
     await env_.feed(card("watch_candidate", hit))
     (item,) = await env_.items()
     assert item.verdict == "mechanical" and env_.pushed == [(item.id, "hit")]
+
+
+def test_every_source_but_cinemacity_is_judged() -> None:
+    def judged(source: str, criteria: str | None = "Nem bányászott.") -> bool:
+        return wmod._judged(Watch(slug="x", source=source, criteria=criteria))
+
+    assert judged("hardverapro") and judged("page")
+    assert judged("jofogas")  # a source added later is judged without a code change
+    assert not judged("cinemacity")
+    assert not judged("hardverapro", criteria=None) and not judged("page", criteria="")

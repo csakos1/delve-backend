@@ -52,9 +52,9 @@ log = logging.getLogger("delve.watches")
 WATCH_CARD_TYPES = ("watch_def", "watch_candidate", "watch_run")
 _RANK = {"watch_def": 0, "watch_candidate": 1, "watch_run": 2}
 HITS = ("match", "mechanical")
-# sources whose listings carry text worth judging; for cinemacity the listing itself (the
-# film is bookable) is the hit, whatever the agent wrote into criteria
-JUDGED_SOURCES = ("hardverapro", "page")
+# sources whose listing itself is the hit (cinemacity: the film is bookable), whatever the
+# agent wrote into criteria; every other source, a new one too, is judged when it has criteria
+UNJUDGED_SOURCES = ("cinemacity",)
 FILTER_KEYS = ("include", "any", "exclude", "min_price", "max_price", "fetch_details",
                "notify_existing")  # fmt: skip
 # a candidate card older than this when it arrives is history: judged, not pushed
@@ -701,7 +701,7 @@ class WatchService:
 
 
 def _judged(w: Watch) -> bool:
-    return bool(w.criteria) and w.source in JUDGED_SOURCES
+    return bool(w.criteria) and w.source not in UNJUDGED_SOURCES
 
 
 def _apply_run(w: Watch, p: dict[str, Any], ts: datetime, now: datetime) -> None:

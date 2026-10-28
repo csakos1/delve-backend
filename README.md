@@ -345,7 +345,7 @@ earlier that is no longer reserved) and `watch_run` (counts, or `status: error` 
 
 | `verdict` | Meaning |
 |---|---|
-| `mechanical` | the watcher has no `criteria`: every new candidate is a hit |
+| `mechanical` | the watcher has no `criteria`, or its source is `cinemacity` (the bookable film is the hit): every new candidate is a hit; every other source, a new one too, is judged when it has `criteria` |
 | `pending` | waits for the judge (or for its watcher's definition) |
 | `match` / `reject` | the judge's answer against `criteria`, with a one-sentence `reason` |
 | `error` | the judge failed 3 times |
