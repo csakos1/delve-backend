@@ -352,9 +352,11 @@ earlier that is no longer reserved) and `watch_run` (counts, or `status: error` 
 
 **The judge** asks llama-server directly (`/v1/chat/completions`, thinking off,
 `temperature 0`, a JSON schema `{match, reason}`, no tools); the listing is data, never
-instructions. It runs in the run worker while no run is queued, one item at a time, so chat
-runs go first and llama-server is never asked twice at once; a held queue holds it too.
-After a failed call it waits 60 s.
+instructions. It rejects only what the listing says or clearly shows against the
+condition; a listing that says nothing about it is a match (the user's choice: "not
+mined" means no sign of mining). It runs in the run worker while no run is queued, one
+item at a time, so chat runs go first and llama-server is never asked twice at once; a
+held queue holds it too. After a failed call it waits 60 s.
 
 A hit is pushed (`kind: watch`) when its card is at most 6 h old; older cards (a re-read
 file, history) are judged but not pushed. A reserved hit (Hardverapró "jegelve",

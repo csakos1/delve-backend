@@ -75,8 +75,9 @@ JUDGE_SYSTEM = (
     'Answer with JSON only: {"match": true|false, "reason": "<one sentence>"}.\n'
     "Judge what the listing means, not which words it contains: a statement that something "
     "is not the case (e.g. 'nem volt bányászva', 'never mined') counts as not the case.\n"
-    "match is true only if the listing clearly satisfies the condition; if the text does "
-    "not say enough to decide, match is false and the reason says what is missing.\n"
+    "match is false only if the listing says or clearly shows something that goes against "
+    "the condition; if it says nothing about it, match is true (the reason says that the "
+    "listing does not mention it).\n"
     "Write the reason in the language of the condition, at most 200 characters."
 )
 JUDGE_SCHEMA: dict[str, Any] = {
