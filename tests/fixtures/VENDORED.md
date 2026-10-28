@@ -20,3 +20,11 @@ run over `llama-show-*.txt`, `hermes-show-running.txt` and `gpu-*.csv` there, ke
 detected,none}` (B4): `host_status()` over `proc-*.txt` and `parse_incidents()` over
 `incidents-*.txt` of `delve-infra` `tests/fixtures/system/` (`detected` is that repository's
 synthetic sample).
+
+Recorded for W2 (watchers) on the live machine, 2026-10-28, not vendored from
+`delve-infra`: `watches/cards.jsonl` (the first real `watch_def` / `watch_run` cards of
+three watchers), `watches/cron-list.json` (the helper's `agent.cron.list` answer),
+`llama/chat-judge.json` (one judge call: `/v1/chat/completions`, thinking off, JSON schema)
+and `protocol/failed-partial.event.json` (the `run.failed` payload of a run that hit the
+output length limit: no `error`, the reason in `output`, `partial: true` - N73). The model
+path is redacted.

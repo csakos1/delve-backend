@@ -121,9 +121,16 @@ def test_notify_settings_and_clip() -> None:
         "run_done": True,
         "water": False,
         "brief": False,
+        "watches": True,
     }
     got = notify_settings({"run_done": False, "water": "yes", "other": True})
-    assert got == {"approvals": True, "run_done": False, "water": False, "brief": False}
+    assert got == {
+        "approvals": True,
+        "run_done": False,
+        "water": False,
+        "brief": False,
+        "watches": True,
+    }
     assert clip("  a \n b  ", 80) == "a b"
     assert clip("x" * 100, 80) == "x" * 79 + "…"
     assert clip(None, 10) == ""
@@ -494,7 +501,13 @@ def _auth(token: str) -> dict[str, str]:
 def test_devices_me_notify(client: TestClient, token: str) -> None:
     me = client.get("/api/v1/devices/me", headers=_auth(token)).json()
     assert me["push"] is False  # no service account in the test environment
-    assert me["notify"] == {"approvals": True, "run_done": True, "water": False, "brief": False}
+    assert me["notify"] == {
+        "approvals": True,
+        "run_done": True,
+        "water": False,
+        "brief": False,
+        "watches": True,
+    }
 
     r = client.patch(
         "/api/v1/devices/me", headers=_auth(token), json={"notify": {"run_done": False}}
@@ -505,6 +518,7 @@ def test_devices_me_notify(client: TestClient, token: str) -> None:
         "run_done": False,
         "water": False,
         "brief": False,
+        "watches": True,
     }
     r = client.patch("/api/v1/devices/me", headers=_auth(token), json={"notify": {"water": True}})
     assert r.json()["notify"]["run_done"] is False and r.json()["notify"]["water"] is True

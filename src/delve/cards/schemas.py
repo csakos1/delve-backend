@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -146,7 +147,179 @@ def validate_updates(p, now):
     return {k: v for k, v in out.items() if v is not None}
 
 
-VALIDATORS = {"water": validate_water, "updates": validate_updates}
+# --- watch_* (csak a watchlib publikálja: figyelők, Delve W) -----------------------
+WATCH_SOURCES = ("hardverapro", "cinemacity", "page")
+WATCH_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{1,39}")
+WATCH_ITEM_ID_RE = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+WATCH_HASH_RE = re.compile(r"[0-9a-f]{16}")
+WATCH_MAX_WORDS = 10
+WATCH_MAX_PRICE = 1_000_000_000
+
+
+def _bool(v, name, errs, required, default=None):
+    if v is None:
+        if required:
+            errs.append(f"{name}: required boolean")
+        return default
+    if not isinstance(v, bool):
+        errs.append(f"{name}: must be a boolean")
+        return None
+    return v
+
+
+def _int(v, name, lo, hi, errs, required):
+    if v is None:
+        if required:
+            errs.append(f"{name}: required integer")
+        return None
+    if isinstance(v, bool) or not isinstance(v, int):
+        errs.append(f"{name}: must be an integer")
+        return None
+    if not lo <= v <= hi:
+        errs.append(f"{name}: out of range [{lo}, {hi}]")
+        return None
+    return v
+
+
+def _match(v, name, rx, max_len, errs, required):
+    s = _str(v, name, max_len, errs, required)
+    if s is not None and not rx.fullmatch(s):
+        errs.append(f"{name}: invalid format")
+        return None
+    return s
+
+
+def _url(v, name, errs, required):
+    s = _str(v, name, 600, errs, required)
+    if s is not None and not re.fullmatch(r"https?://[^\s\"'<>]+", s):
+        errs.append(f"{name}: must be an http(s) URL")
+        return None
+    return s
+
+
+def _words(v, name, errs):
+    if v is None:
+        return []
+    if not isinstance(v, list) or len(v) > WATCH_MAX_WORDS:
+        errs.append(f"{name}: list of at most {WATCH_MAX_WORDS} words")
+        return None
+    out = []
+    for w in v:
+        if not isinstance(w, str) or not 0 < len(w.strip()) <= 40:
+            errs.append(f"{name}: each entry is a non-empty string of at most 40 chars")
+            return None
+        out.append(w.strip())
+    return out
+
+
+def _unknown(p, fields, errs):
+    unknown = sorted(set(p) - set(fields))
+    if unknown:
+        errs.append(f"unknown fields: {', '.join(map(str, unknown))}")
+
+
+WATCH_DEF_FIELDS = ("slug", "name", "source", "url", "include", "any", "exclude",
+                    "min_price", "max_price", "criteria", "fetch_details",
+                    "stop_after_hit", "notify_existing", "schedule", "def_hash")
+
+
+def validate_watch_def(p, now):
+    if not isinstance(p, dict):
+        raise CardValidationError(["payload: must be an object"])
+    errs = []
+    _unknown(p, WATCH_DEF_FIELDS, errs)
+    source = _str(p.get("source"), "source", 20, errs, True)
+    if source is not None and source not in WATCH_SOURCES:
+        errs.append(f"source: must be one of {', '.join(WATCH_SOURCES)}")
+    out = {
+        "slug": _match(p.get("slug"), "slug", WATCH_SLUG_RE, 40, errs, True),
+        "name": _str(p.get("name"), "name", 80, errs, True),
+        "source": source,
+        "url": _url(p.get("url"), "url", errs, True),
+        "include": _words(p.get("include"), "include", errs),
+        "any": _words(p.get("any"), "any", errs),
+        "exclude": _words(p.get("exclude"), "exclude", errs),
+        "min_price": _int(p.get("min_price"), "min_price", 0, WATCH_MAX_PRICE, errs, False),
+        "max_price": _int(p.get("max_price"), "max_price", 0, WATCH_MAX_PRICE, errs, False),
+        "criteria": _str(p.get("criteria"), "criteria", 500, errs, False),
+        "fetch_details": _bool(p.get("fetch_details"), "fetch_details", errs, False, False),
+        "stop_after_hit": _bool(p.get("stop_after_hit"), "stop_after_hit", errs, False, False),
+        "notify_existing": _bool(p.get("notify_existing"), "notify_existing", errs, False, False),
+        "schedule": _str(p.get("schedule"), "schedule", 60, errs, True),
+        "def_hash": _match(p.get("def_hash"), "def_hash", WATCH_HASH_RE, 16, errs, True),
+    }
+    if errs:
+        raise CardValidationError(errs)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+WATCH_RUN_FIELDS = ("slug", "status", "checked_at", "items", "matched", "new", "candidates",
+                    "baseline", "error_code", "error", "duration_ms", "final_url")
+WATCH_RUN_STATUSES = ("ok", "error")
+
+
+def validate_watch_run(p, now):
+    if not isinstance(p, dict):
+        raise CardValidationError(["payload: must be an object"])
+    errs = []
+    _unknown(p, WATCH_RUN_FIELDS, errs)
+    status = _str(p.get("status"), "status", 10, errs, True)
+    if status is not None and status not in WATCH_RUN_STATUSES:
+        errs.append("status: must be ok or error")
+    out = {
+        "slug": _match(p.get("slug"), "slug", WATCH_SLUG_RE, 40, errs, True),
+        "status": status,
+        "checked_at": _ts(p.get("checked_at"), "checked_at", errs, now),
+        "items": _int(p.get("items"), "items", 0, 100000, errs, status == "ok"),
+        "matched": _int(p.get("matched"), "matched", 0, 100000, errs, status == "ok"),
+        "new": _int(p.get("new"), "new", 0, 100000, errs, status == "ok"),
+        "candidates": _int(p.get("candidates"), "candidates", 0, 1000, errs, status == "ok"),
+        "baseline": _bool(p.get("baseline"), "baseline", errs, False, False),
+        "error_code": _match(p.get("error_code"), "error_code", re.compile(r"[a-z0-9_]{1,40}"),
+                             40, errs, status == "error"),
+        "error": _str(p.get("error"), "error", 300, errs, False),
+        "duration_ms": _int(p.get("duration_ms"), "duration_ms", 0, 3_600_000, errs, False),
+        "final_url": _url(p.get("final_url"), "final_url", errs, False),
+    }
+    if errs:
+        raise CardValidationError(errs)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+WATCH_CANDIDATE_FIELDS = ("slug", "item_id", "title", "url", "price", "price_value",
+                          "location", "posted", "excerpt", "reserved", "change")
+# change: an item announced earlier came back in a new state ("available": no longer reserved)
+WATCH_CHANGES = ("available",)
+
+
+def validate_watch_candidate(p, now):
+    if not isinstance(p, dict):
+        raise CardValidationError(["payload: must be an object"])
+    errs = []
+    _unknown(p, WATCH_CANDIDATE_FIELDS, errs)
+    out = {
+        "slug": _match(p.get("slug"), "slug", WATCH_SLUG_RE, 40, errs, True),
+        "item_id": _match(p.get("item_id"), "item_id", WATCH_ITEM_ID_RE, 64, errs, True),
+        "title": _str(p.get("title"), "title", 300, errs, True),
+        "url": _url(p.get("url"), "url", errs, True),
+        "price": _str(p.get("price"), "price", 60, errs, False),
+        "price_value": _int(p.get("price_value"), "price_value", 0, WATCH_MAX_PRICE, errs, False),
+        "location": _str(p.get("location"), "location", 120, errs, False),
+        "posted": _str(p.get("posted"), "posted", 60, errs, False),
+        "excerpt": _str(p.get("excerpt"), "excerpt", 1500, errs, False),
+        "reserved": _bool(p.get("reserved"), "reserved", errs, False),
+        "change": _str(p.get("change"), "change", 20, errs, False),
+    }
+    if out["change"] is not None and out["change"] not in WATCH_CHANGES:
+        errs.append(f"change: must be one of {', '.join(WATCH_CHANGES)}")
+    if errs:
+        raise CardValidationError(errs)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+VALIDATORS = {"water": validate_water, "updates": validate_updates,
+              "watch_def": validate_watch_def, "watch_run": validate_watch_run,
+              "watch_candidate": validate_watch_candidate}
 
 
 def build_event(card_type, payload, severity, origin, session_id=None, now=None):

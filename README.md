@@ -35,6 +35,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 11 | Schedules (cron, catch-up, run now) and the morning brief card; brief push | done |
 | 12 | Observability: run, approval and token series, GPU sampling, retention cleanup | done |
 | 13 | Attachments: image and file uploads, images into the run, files through the agent's inbox | done |
+| 14 | Watchers: the agent's watch cards, the judge between runs, hit pushes with the link, cron jobs through the helper; the missed morning brief written late | done |
 
 ## Development
 
@@ -115,7 +116,7 @@ needs `Authorization: Bearer <device token>`.
 |---|---|---|
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
 | `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm, push, notify}`; `push`: the server can send pushes |
-| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?}}` (booleans; left-out keys keep their value) → the device |
+| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?, watches?}}` (booleans; left-out keys keep their value) → the device |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
 | `DELETE` | `/api/v1/devices/me` | unpair: revokes the calling token (and its FCM token) → 204 |
 | `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
@@ -139,6 +140,10 @@ needs `Authorization: Bearer <device token>`.
 | `POST` | `/api/v1/attachments?kind=image\|file&filename=` | the raw bytes as the body, the type in `Content-Type` → 201 `attachment`; 413 `too_large`, 415 `unsupported_image`, 422 `empty` |
 | `GET` | `/api/v1/attachments/{id}` | the bytes (images `inline`, files `attachment`); 404 `attachment_not_found`, 410 `attachment_gone` |
 | `POST` | `/api/v1/attachments/{id}/copy` | a new, unsent upload with the same content ("send again") → 201 `attachment`; 410 `attachment_gone` |
+| `GET` | `/api/v1/watches` | `{data: [watch]}` (not deleted ones), by name |
+| `GET` | `/api/v1/watches/{slug}` | `watch`; 404 `watch_not_found` |
+| `GET` | `/api/v1/watches/{slug}/items?verdict=&before=&limit=` | `{data: [watch_item], next_before}`, newest first; `verdict`: comma list of `pending`, `match`, `reject`, `mechanical`, `error`, or `hits` (= `match,mechanical`); 422 `invalid_verdict` |
+| `POST` | `/api/v1/watches/{slug}/pause\|resume\|run` | the watcher's cron job through the helper → `watch`; 409 `watch_job_missing`, 503 `helper_unavailable`, 502 `helper_failed` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -250,7 +255,9 @@ the file is world-readable inside the agent's `0700` home). Every `DELVE_CARDS_P
 NOTHING` on the card id) in one transaction with the new offset. A new card is published
 as `card.new` (the `card` shape). A shorter file or a new inode starts over from 0; invalid
 lines are logged and skipped. History is ingested too (the payload's time bounds are taken
-relative to the card's own `ts`).
+relative to the card's own `ts`). Newly inserted cards also go to the watchers (below) in
+the same transaction. Migration 0010 drops the stored offset once, so the `watch_*` cards
+written before it (then skipped as an unknown type) are read again.
 
 ### System
 
@@ -313,13 +320,59 @@ The **brief** is written without the model straight into `cards` (`type: brief`,
 `origin: backend`, `card.new`): `payload` = `{date, uptime_s, booted_at, open_incidents,
 incidents: [{id, state, job, error, last_seen}] (≤ 5), updates_count, updates_checked_at,
 water: {station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at},
-llama_state, hermes_state, missing}`. Uptime, boot and the agent's cron incidents come
+llama_state, hermes_state, missing, late_by_s}`. Uptime, boot and the agent's cron incidents come
 from the helper (`host.status`, `agent.incidents`; an incident is open until acknowledged,
 `resolved` included), the update count from the latest `updates` card of the agent's
 `arch-updates` script, the water reading from the latest scheduled `water` card (both at
 most 36 h old), the states from the system view. A source that cannot be read is `null`
 and named in `missing`. `severity`: `alert` (llama-server failed/down or Hermes down),
 `warn` (open incidents or something missing), else `info`.
+
+A **missed brief** (the machine was off at 07:30) is not skipped like other late
+schedules: if it is still the same local day and at most 6 h late, it is written once the
+backend has been up for 3 minutes (the agent's own catch-up runs - `arch-updates`, the
+water reading - come first), with `late_by_s` set (else `null`).
+
+### Watchers
+
+The agent defines a watcher in the chat (its `watch_manage` tool, delve-infra) and runs it
+as a no-agent Hermes cron job `watch:<slug>`; no model runs on a check. Every run writes
+cards: `watch_def` (the definition, when it changed), `watch_candidate` (a new listing
+that passed the watcher's mechanical filters; with `change: "available"` one announced
+earlier that is no longer reserved) and `watch_run` (counts, or `status: error` with
+`error_code`). The card ingest applies them in its own transaction (`watches`,
+`watch_items`); `watch.updated` and `watch.item` follow.
+
+| `verdict` | Meaning |
+|---|---|
+| `mechanical` | the watcher has no `criteria`: every new candidate is a hit |
+| `pending` | waits for the judge (or for its watcher's definition) |
+| `match` / `reject` | the judge's answer against `criteria`, with a one-sentence `reason` |
+| `error` | the judge failed 3 times |
+
+**The judge** asks llama-server directly (`/v1/chat/completions`, thinking off,
+`temperature 0`, a JSON schema `{match, reason}`, no tools); the listing is data, never
+instructions. It runs in the run worker while no run is queued, one item at a time, so chat
+runs go first and llama-server is never asked twice at once; a held queue holds it too.
+After a failed call it waits 60 s.
+
+A hit is pushed (`kind: watch`) when its card is at most 6 h old; older cards (a re-read
+file, history) are judged but not pushed. A reserved hit (Hardverapró "jegelve",
+`reserved: true`) is pushed with the mark, and once more (`change: available`) when the
+mark is gone. `stop_after_hit` pauses the cron job after the first hit (`stopped_at`;
+resume clears it). Every `DELVE_WATCH_RECONCILE_S` (300 s) and after a new definition the
+backend reads the cron jobs (`agent.cron.list`): `job_id`, paused or not, `next_run_at`; a
+watcher whose job has been gone for more than 2 minutes after its definition was deleted in
+the chat (`state: deleted`, no longer listed). Hits are kept
+`DELVE_WATCH_HIT_RETENTION_DAYS` (180), the rest `DELVE_WATCH_REJECT_RETENTION_DAYS` (30).
+
+`watch`: `{slug, name, source, url, criteria, include, any, exclude, min_price, max_price,
+fetch_details, stop_after_hit, schedule, state (active|paused|unknown|deleted), job_id,
+next_run_at, last_check_at, last_status, last_error_code, last_error, last_items,
+last_matched, errors_in_row, hits, hits_24h, pending, rejected, last_hit_at, stopped_at,
+defined_at, updated_at}`. `watch_item`: `{id, slug, item_id, title, url, price,
+price_value, location, posted, excerpt, reserved, verdict, reason, seen_at, judged_at,
+notified_at, available_at}`.
 
 ### Observability
 
@@ -384,7 +437,8 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 | `approval` | `request_id, conversation_id, title, action_class, command` (≤ 80 chars), `status` (`pending`/`expired_in_hermes`), `hermes_deadline, expires_at` | when an approval can be answered, and again when its status changes; high priority, collapse key = `request_id`, TTL until `expires_at` |
 | `approval_resolved` | `request_id, status` | when a pushed approval stops being answerable (answered anywhere, expired, cancelled) |
 | `card` | `card_id, type` (`water`), `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
-| `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
+| `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, late_by_s, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
+| `watch` | `change` (`hit`/`available`), `slug, name, item` (the `watch_item` id), `item_id, title` (≤ 120), `price, reason` (≤ 240), `url, reserved` (`true`/`false`) | a watcher's hit, and a reserved hit that became available, to devices with `notify.watches` (on by default); high priority, collapse key `watch:<slug>:<item_id>`, TTL 24 h |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
 Every kind goes with high priority: a normal-priority message waits while the phone
@@ -392,7 +446,7 @@ dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
-milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`); revoked devices and devices without an FCM token get nothing.
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`); revoked devices and devices without an FCM token get nothing.
 Whether the phone has a socket open does not matter: a phone locked a moment ago may
 still look connected here for up to a minute (its close never arrived), so the log line
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An

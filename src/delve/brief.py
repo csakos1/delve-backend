@@ -60,6 +60,7 @@ BRIEF_KEYS = (
     "llama_state",
     "hermes_state",
     "missing",
+    "late_by_s",
 )
 
 
@@ -113,8 +114,10 @@ def brief_payload(
     updates: Card | None,
     water: Card | None,
     system: dict[str, Any] | None,
+    late_by_s: int | None = None,
 ) -> dict[str, Any]:
-    """Pure: the brief's payload from what could be read (None = not available)."""
+    """Pure: the brief's payload from what could be read (None = not available).
+    `late_by_s`: written after the backend missed the time (N74), else None."""
     missing: list[str] = []
     out: dict[str, Any] = {k: None for k in BRIEF_KEYS}
     out["date"] = now.astimezone(TZ).date().isoformat()
@@ -147,6 +150,7 @@ def brief_payload(
     else:
         missing.append("system")
     out["missing"] = missing
+    out["late_by_s"] = late_by_s
     return out
 
 
@@ -182,7 +186,9 @@ class BriefService:
             ).scalar_one_or_none()
         return card
 
-    async def build(self, now: datetime | None = None) -> dict[str, Any]:
+    async def build(
+        self, now: datetime | None = None, *, late_by_s: int | None = None
+    ) -> dict[str, Any]:
         now = now or datetime.now(UTC)
         host = await self._helper_data("host.status", 15.0)
         inc = await self._helper_data("agent.incidents", INCIDENTS_TIMEOUT_S)
@@ -200,12 +206,15 @@ class BriefService:
             updates=await self._latest("updates", now - SOURCE_MAX_AGE),
             water=await self._latest("water", now - SOURCE_MAX_AGE),
             system=system,
+            late_by_s=late_by_s,
         )
 
-    async def publish(self, card_id: str, now: datetime | None = None) -> dict[str, Any]:
+    async def publish(
+        self, card_id: str, now: datetime | None = None, *, late_by_s: int | None = None
+    ) -> dict[str, Any]:
         """Build the brief and store it as card `card_id` (idempotent on the id)."""
         now = now or datetime.now(UTC)
-        payload = await self.build(now)
+        payload = await self.build(now, late_by_s=late_by_s)
         values = {
             "id": card_id,
             "v": 1,

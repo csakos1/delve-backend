@@ -26,6 +26,8 @@ from delve.db.models import (
     Run,
     Schedule,
     ToolStep,
+    Watch,
+    WatchItem,
 )
 from delve.llama import Props
 from delve.schedules import schedule_out
@@ -39,6 +41,7 @@ from delve.serialize import (
 )
 from delve.stats import GpuBucket, RunRow, stats_out
 from delve.system import Parts, gpu_out, hermes_issues, system_out
+from delve.watches import item_out, watch_out
 
 _T = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -85,6 +88,15 @@ def shapes() -> dict[str, Any]:
         updates=card, water=card,
         system={"llama": {"status": "running"}, "hermes": {"status": "ok"}},
     )  # fmt: skip
+    watch = Watch(slug="s", name="n", source="page", url="https://x.example/", filters={},
+                  stop_after_hit=False, schedule="every 4h", def_hash="0", defined_at=_T,
+                  errors_in_row=0, updated_at=_T)  # fmt: skip
+    witem = WatchItem(id=1, slug="s", item_id="i", card_id="k", title="t",
+                      url="https://x.example/a", reserved=False, verdict="match", notify=True,
+                      seen_at=_T)  # fmt: skip
+    watch_keys = _keys(watch_out(watch))
+    for k in ("include", "any", "exclude"):
+        watch_keys[k] = "string[]"
     brief_keys = _keys(brief)
     brief_keys["water"] = {k: True for k in sorted(brief["water"])} if brief["water"] else True
     brief_keys["incidents"] = "brief_incident[]"
@@ -115,6 +127,11 @@ def shapes() -> dict[str, Any]:
         | {"points": "stats_point[]"},
         "stats_point": _keys(_stats()["generation"]["points"][0]),
         "stats_day": _keys(_stats()["tokens_per_day"]["days"][0]),
+        # W2: GET /api/v1/watches items, watch.updated (state: active|paused|unknown|deleted)
+        "watch": watch_keys,
+        # W2: GET /api/v1/watches/{slug}/items, watch.item
+        # (verdict: pending|match|reject|mechanical|error)
+        "watch_item": _keys(item_out(witem)),
         "stats_gpu": {
             **_keys({"index": 0, "name": "n"}),
             "power": "stats_series",

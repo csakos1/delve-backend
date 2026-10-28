@@ -19,6 +19,7 @@ from delve.api import devices, rest, ws
 from delve.api import schedules as schedules_api
 from delve.api import stats as stats_api
 from delve.api import system as system_api
+from delve.api import watches as watches_api
 from delve.attachments import AttachmentStore
 from delve.brief import BriefService
 from delve.cards.ingest import CardIngester
@@ -33,6 +34,7 @@ from delve.runs.manager import RunManager, Timing
 from delve.schedules import ScheduleService
 from delve.stats import StatsService
 from delve.system import HelperClient, SystemService
+from delve.watches import WatchService
 
 log = logging.getLogger("delve.app")
 
@@ -94,11 +96,29 @@ def create_app(
         hub.add_listener(push.listener)
         app.state.push = push
         await push.start()
+        helper = HelperClient(settings.helper_socket)
+        watches = WatchService(
+            sessionmaker,
+            hub,
+            helper,
+            llama,
+            notify=push.watch,
+            wake=manager.wake,
+            reconcile_s=settings.watch_reconcile_s,
+            judge_timeout_s=settings.watch_judge_timeout_s,
+            hit_retention_days=settings.watch_hit_retention_days,
+            reject_retention_days=settings.watch_reject_retention_days,
+        )
+        manager.side_work = watches.judge_one
+        app.state.watches = watches
         ingester = CardIngester(
-            sessionmaker, hub, settings.cards_path, poll_s=settings.cards_poll_s
+            sessionmaker,
+            hub,
+            settings.cards_path,
+            poll_s=settings.cards_poll_s,
+            processors=[watches.apply],
         )
         app.state.card_ingester = ingester
-        helper = HelperClient(settings.helper_socket)
         system = SystemService(
             sessionmaker,
             manager,
@@ -134,6 +154,7 @@ def create_app(
             await schedules.start()
             await stats.start()
             await attachments.start()
+            await watches.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -141,6 +162,7 @@ def create_app(
         try:
             yield
         finally:
+            await watches.close()
             await attachments.close()
             await stats.close()
             await schedules.close()
@@ -170,6 +192,7 @@ def create_app(
     app.include_router(schedules_api.router)
     app.include_router(stats_api.router)
     app.include_router(attachments_api.router)
+    app.include_router(watches_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

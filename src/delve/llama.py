@@ -168,3 +168,20 @@ class LlamaClient:
             return Props.parse(r.json())
         except (ValueError, KeyError, TypeError) as exc:
             raise LlamaUnavailable(f"/props: unexpected body ({type(exc).__name__})") from exc
+
+    async def chat(self, body: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
+        """One OpenAI-compatible chat completion (the watchers' judge, W2). The body is
+        sent as is; the answer is the parsed JSON object."""
+        try:
+            r = await self._http.post("/v1/chat/completions", json=body, timeout=timeout_s)
+        except httpx.HTTPError as exc:
+            raise LlamaUnavailable(f"/v1/chat/completions: {type(exc).__name__}") from exc
+        if r.status_code != 200:
+            raise LlamaUnavailable(f"/v1/chat/completions: HTTP {r.status_code}")
+        try:
+            data = r.json()
+        except ValueError as exc:
+            raise LlamaUnavailable("/v1/chat/completions: not JSON") from exc
+        if not isinstance(data, dict):
+            raise LlamaUnavailable("/v1/chat/completions: unexpected body")
+        return data

@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -109,6 +110,11 @@ def parse_line(line: bytes) -> CardIn:
     )
 
 
+# Called with the session and the cards inserted in this poll, before the commit (W2: the
+# watchers' tables); returns callables to run after the commit (events, pushes).
+Processor = Callable[[AsyncSession, Sequence[CardIn]], Awaitable[list[Callable[[], None]]]]
+
+
 class CardIngester:
     def __init__(
         self,
@@ -117,8 +123,10 @@ class CardIngester:
         path: Path,
         *,
         poll_s: float = 2.0,
+        processors: Sequence[Processor] = (),
     ) -> None:
         self._sm = sessionmaker
+        self._processors = list(processors)
         self._hub = hub
         self.path = path
         self._poll_s = poll_s
@@ -192,8 +200,10 @@ class CardIngester:
                     extra={"path": key, "line_in_chunk": n, "error": str(exc)},
                 )
 
+        after: list[Callable[[], None]] = []
         async with self._sm() as s:
             new_ids: list[str] = []
+            new_cards: list[CardIn] = []
             for c in cards:
                 inserted = (
                     await s.execute(
@@ -214,6 +224,14 @@ class CardIngester:
                 ).scalar_one_or_none()
                 if inserted is not None:
                     new_ids.append(inserted)
+                    new_cards.append(c)
+            for proc in self._processors if new_cards else ():
+                # its own savepoint: a failing processor must not hold back the cards
+                try:
+                    async with s.begin_nested():
+                        after.extend(await proc(s, new_cards))
+                except Exception:
+                    log.exception("card processor failed", extra={"cards": len(new_cards)})
             stmt = insert(CardIngestOffset).values(
                 path=key, inode=st.st_ino, offset_bytes=offset + len(consumed),
                 updated_at=datetime.now(UTC),
@@ -238,6 +256,11 @@ class CardIngester:
         out = [card_out(by_id[i]) for i in new_ids]
         for item in out:
             self._hub.publish("card.new", item)
+        for effect in after:
+            try:
+                effect()
+            except Exception:
+                log.exception("card effect failed")
         if new_ids or bad:
             log.info(
                 "cards ingested",

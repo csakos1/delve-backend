@@ -128,6 +128,7 @@ def test_brief_payload_from_every_source() -> None:
         "llama_state": "running",
         "hermes_state": "degraded",
         "missing": [],
+            "late_by_s": None,
     }  # fmt: skip
     assert brief_severity(p) == "info"
 
@@ -465,6 +466,43 @@ async def test_brief_run_now_and_scheduled(sx: Env) -> None:
     assert len(cards) == 2
     scheduled = max(cards, key=lambda c: c.ts)
     assert scheduled.payload["open_incidents"] == 1 and scheduled.payload["date"] == "2026-10-22"
+
+
+@pg
+async def test_missed_brief_is_written_late_the_same_day(sx: Env) -> None:
+    """N74: the machine was off at 07:30; the brief comes after the start settles."""
+    db = sx.h.db
+
+    async def due(at: datetime) -> None:
+        async with db() as s:
+            await s.execute(update(Schedule).where(Schedule.kind == "brief").values(next_run_at=at))
+            await s.commit()
+
+    async def briefs() -> list[Card]:
+        async with db() as s:
+            return list((await s.execute(select(Card).where(Card.type == "brief"))).scalars())
+
+    await due(local(2026, 10, 22, 7, 30))
+    sx.clock.at = local(2026, 10, 22, 9, 24)
+    sx.svc._started_at = sx.clock.at  # just started
+    await sx.svc.tick()
+    assert await briefs() == []  # settling: the agent's own catch-up runs first
+    brief = (await sx.svc.list())[0]
+    assert brief["next_run_at"] == local(2026, 10, 22, 7, 30).isoformat()
+    sx.clock.at = local(2026, 10, 22, 9, 27, 30)
+    await sx.svc.tick()
+    (card,) = await briefs()
+    assert card.payload["late_by_s"] == 7050 and card.payload["date"] == "2026-10-22"
+    brief = (await sx.svc.list())[0]
+    assert brief["next_run_at"] == local(2026, 10, 23, 7, 30).isoformat()
+    assert brief["last_status"] == "ok"
+
+    # more than 6 hours late: skipped as before
+    await due(local(2026, 10, 23, 7, 30))
+    sx.clock.at = local(2026, 10, 23, 13, 31)
+    await sx.svc.tick()
+    assert len(await briefs()) == 1
+    assert (await sx.svc.list())[0]["next_run_at"] == local(2026, 10, 24, 7, 30).isoformat()
 
 
 @pg

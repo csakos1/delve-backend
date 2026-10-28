@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     push_log_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
         default=90, validation_alias=_env("DELVE_PUSH_LOG_RETENTION_DAYS")
     )
+    # W2: watchers - agent.cron.list reconciliation, the judge's llama call, retention
+    watch_reconcile_s: Annotated[float, Field(ge=0, le=86_400)] = Field(
+        default=300.0, validation_alias=_env("DELVE_WATCH_RECONCILE_S")
+    )
+    watch_judge_timeout_s: Annotated[float, Field(gt=0, le=600)] = Field(
+        default=90.0, validation_alias=_env("DELVE_WATCH_JUDGE_TIMEOUT_S")
+    )
+    watch_hit_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=180, validation_alias=_env("DELVE_WATCH_HIT_RETENTION_DAYS")
+    )
+    watch_reject_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=30, validation_alias=_env("DELVE_WATCH_REJECT_RETENTION_DAYS")
+    )
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")

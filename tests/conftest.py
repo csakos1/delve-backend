@@ -37,6 +37,8 @@ BASE_ENV = {
     # never the machine's real state or inbox directories (test_attachments uses tmp_path)
     "DELVE_ATTACHMENTS_DIR": "/nonexistent/delve-attachments",
     "DELVE_INBOX_DIR": "/nonexistent/delve-inbox",
+    # no cron-list polling of the (missing) helper in the app tests; test_watches drives it
+    "DELVE_WATCH_RECONCILE_S": "0",
 }
 
 
@@ -61,8 +63,9 @@ def pg_url() -> str:
 # --- database fixtures for the run manager / API tests --------------------------------
 
 TABLES = (
-    "gpu_samples, push_log, devices, system_state, schedules, card_ingest_offsets, cards, "
-    "approvals, tool_steps, run_events, runs, attachments, messages, conversations"
+    "watch_items, watches, gpu_samples, push_log, devices, system_state, schedules, "
+    "card_ingest_offsets, cards, approvals, tool_steps, run_events, runs, attachments, "
+    "messages, conversations"
 )
 
 

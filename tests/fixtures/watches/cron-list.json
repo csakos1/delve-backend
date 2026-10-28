@@ -1,0 +1,53 @@
+{
+ "ok": true,
+ "verb": "agent.cron.list",
+ "data": {
+  "jobs": [
+   {
+    "id": "c4d09b7e1cd7",
+    "name": "balaton-water",
+    "script": "water_level.py",
+    "no_agent": true,
+    "enabled": true,
+    "state": "scheduled",
+    "next_run_at": "2026-10-28T12:52:00+01:00",
+    "last_run_at": "2026-10-28T09:24:35.272921+01:00",
+    "last_status": "ok",
+    "failure_streak": 0,
+    "paused_at": null,
+    "schedule": "52 8,12,20 * * *",
+    "last_error": null
+   },
+   {
+    "id": "08a9b8b17c3f",
+    "name": "arch-updates",
+    "script": "updates_check.py",
+    "no_agent": true,
+    "enabled": true,
+    "state": "scheduled",
+    "next_run_at": "2026-10-29T07:15:00+01:00",
+    "last_run_at": "2026-10-28T09:24:36.244520+01:00",
+    "last_status": "ok",
+    "failure_streak": 0,
+    "paused_at": null,
+    "schedule": "15 7 * * *",
+    "last_error": null
+   },
+   {
+    "id": "dde969488486",
+    "name": "watch:bosszuallok-dr-doom-ebredese-jegyek",
+    "script": "watch_bosszuallok_dr_doom_ebredese_jegyek.py",
+    "no_agent": true,
+    "enabled": true,
+    "state": "scheduled",
+    "next_run_at": "2026-10-28T13:15:00+01:00",
+    "last_run_at": null,
+    "last_status": null,
+    "failure_streak": 0,
+    "paused_at": null,
+    "schedule": "15 8,13,19 * * *",
+    "last_error": null
+   }
+  ]
+ }
+}

@@ -31,6 +31,8 @@ EXPECTED_TABLES = {
     "pairing_codes",
     "push_log",
     "gpu_samples",  # B5
+    "watches",  # W2
+    "watch_items",
 }
 
 

@@ -74,7 +74,9 @@ class HelperClient:
         self.path = path
         self._connect_timeout_s = connect_timeout_s
 
-    async def call(self, verb: str, *, timeout_s: float = STATUS_TIMEOUT_S) -> dict[str, Any]:
+    async def call(
+        self, verb: str, *, arg: str | None = None, timeout_s: float = STATUS_TIMEOUT_S
+    ) -> dict[str, Any]:
         try:
             async with asyncio.timeout(self._connect_timeout_s):
                 reader, writer = await asyncio.open_unix_connection(
@@ -83,7 +85,8 @@ class HelperClient:
         except (OSError, TimeoutError) as exc:
             raise HelperUnavailable(f"{self.path}: {type(exc).__name__}") from exc
         try:
-            writer.write(json.dumps({"verb": verb}).encode() + b"\n")
+            req = {"verb": verb} if arg is None else {"verb": verb, "arg": arg}
+            writer.write(json.dumps(req).encode() + b"\n")
             async with asyncio.timeout(timeout_s):
                 await writer.drain()
                 line = await reader.readline()

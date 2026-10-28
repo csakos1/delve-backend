@@ -1,5 +1,5 @@
 {
-  "api_revision": 8,
+  "api_revision": 9,
   "rest": [
     {
       "method": "GET",
@@ -160,6 +160,30 @@
     {
       "method": "POST",
       "path": "/api/v1/system/llama",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/watches",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/watches/{slug}",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/watches/{slug}/items",
+      "query": [
+        "before",
+        "limit",
+        "verdict"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/watches/{slug}/{verb}",
       "query": []
     },
     {
@@ -354,6 +378,7 @@
       "date": true,
       "hermes_state": true,
       "incidents": "brief_incident[]",
+      "late_by_s": true,
       "llama_state": true,
       "missing": "string[]",
       "open_incidents": true,
@@ -413,6 +438,58 @@
     "stats_day": {
       "date": true,
       "tokens": true
+    },
+    "watch": {
+      "any": "string[]",
+      "criteria": true,
+      "defined_at": true,
+      "errors_in_row": true,
+      "exclude": "string[]",
+      "fetch_details": true,
+      "hits": true,
+      "hits_24h": true,
+      "include": "string[]",
+      "job_id": true,
+      "last_check_at": true,
+      "last_error": true,
+      "last_error_code": true,
+      "last_hit_at": true,
+      "last_items": true,
+      "last_matched": true,
+      "last_status": true,
+      "max_price": true,
+      "min_price": true,
+      "name": true,
+      "next_run_at": true,
+      "pending": true,
+      "rejected": true,
+      "schedule": true,
+      "slug": true,
+      "source": true,
+      "state": true,
+      "stop_after_hit": true,
+      "stopped_at": true,
+      "updated_at": true,
+      "url": true
+    },
+    "watch_item": {
+      "available_at": true,
+      "excerpt": true,
+      "id": true,
+      "item_id": true,
+      "judged_at": true,
+      "location": true,
+      "notified_at": true,
+      "posted": true,
+      "price": true,
+      "price_value": true,
+      "reason": true,
+      "reserved": true,
+      "seen_at": true,
+      "slug": true,
+      "title": true,
+      "url": true,
+      "verdict": true
     },
     "stats_gpu": {
       "index": true,
@@ -661,6 +738,58 @@
         "conversation_id",
         "run_id",
         "step"
+      ],
+      "watch.item": [
+        "available_at",
+        "excerpt",
+        "id",
+        "item_id",
+        "judged_at",
+        "location",
+        "notified_at",
+        "posted",
+        "price",
+        "price_value",
+        "reason",
+        "reserved",
+        "seen_at",
+        "slug",
+        "title",
+        "url",
+        "verdict"
+      ],
+      "watch.updated": [
+        "any",
+        "criteria",
+        "defined_at",
+        "errors_in_row",
+        "exclude",
+        "fetch_details",
+        "hits",
+        "hits_24h",
+        "include",
+        "job_id",
+        "last_check_at",
+        "last_error",
+        "last_error_code",
+        "last_hit_at",
+        "last_items",
+        "last_matched",
+        "last_status",
+        "max_price",
+        "min_price",
+        "name",
+        "next_run_at",
+        "pending",
+        "rejected",
+        "schedule",
+        "slug",
+        "source",
+        "state",
+        "stop_after_hit",
+        "stopped_at",
+        "updated_at",
+        "url"
       ]
     },
     "connection_frames": [

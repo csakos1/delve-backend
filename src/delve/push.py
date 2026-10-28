@@ -57,7 +57,17 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delve.db.models import Approval, Card, Conversation, Device, Message, PushLog, Run
+from delve.db.models import (
+    Approval,
+    Card,
+    Conversation,
+    Device,
+    Message,
+    PushLog,
+    Run,
+    Watch,
+    WatchItem,
+)
 from delve.events import Envelope
 
 log = logging.getLogger("delve.push")
@@ -67,6 +77,7 @@ NOTIFY_DEFAULTS: Mapping[str, bool] = {
     "run_done": True,
     "water": False,
     "brief": False,
+    "watches": True,
 }
 ANSWERABLE = frozenset({"pending", "expired_in_hermes"})
 COMMAND_CHARS = 80  # N5: the notification shows the start of the command
@@ -77,9 +88,19 @@ MAX_TTL_S = 28 * 24 * 3600  # FCM's limit
 RESOLVED_TTL_S = 24 * 3600
 RUN_DONE_TTL_S = 6 * 3600
 CARD_TTL_S = 12 * 3600
+WATCH_TTL_S = 24 * 3600
+WATCH_TITLE_CHARS = 120
+WATCH_REASON_CHARS = 240
 # a card read from history (first ingest, a replaced file) is not news
 CARD_PUSH_MAX_AGE_S = 3600
-BRIEF_PUSH_FIELDS = ("date", "uptime_s", "updates_count", "open_incidents", "llama_state")
+BRIEF_PUSH_FIELDS = (
+    "date",
+    "uptime_s",
+    "updates_count",
+    "open_incidents",
+    "llama_state",
+    "late_by_s",
+)
 WATER_PUSH_FIELDS = (
     "station",
     "level_cm",
@@ -342,7 +363,7 @@ def _fcm_error_code(r: httpx.Response) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Job:
-    kind: str  # "approval" | "run"
+    kind: str  # "approval" | "run" | "card" | "watch"
     ref: str
     delay_s: float = 0.0
 
@@ -389,6 +410,12 @@ class PushService:
         elif env.type == "card.new" and _card_worth_a_push(env.data):
             self._queue.put_nowait(_Job("card", str(env.data["id"])))
 
+    def watch(self, item_id: int, change: str) -> None:
+        """A watcher's hit ("hit") or a reserved hit that is free again ("available");
+        called by the WatchService after its commit."""
+        if self.enabled:
+            self._queue.put_nowait(_Job("watch", f"{item_id}:{change}"))
+
     async def start(self) -> None:
         if self.enabled and self._task is None:
             self._task = asyncio.create_task(self._worker(), name="push")
@@ -416,6 +443,8 @@ class PushService:
                     await self._approval(job.ref)
                 elif job.kind == "card":
                     await self._card(job.ref)
+                elif job.kind == "watch":
+                    await self._watch(job.ref)
                 else:
                     await self._run_done(job.ref)
             except asyncio.CancelledError:
@@ -521,6 +550,31 @@ class PushService:
         await self._send(
             card.type, "card", card_id, data, high=True, ttl_s=CARD_TTL_S,
             collapse_key=card.type,
+        )  # fmt: skip
+
+    async def _watch(self, ref: str) -> None:
+        raw_id, _, change = ref.partition(":")
+        async with self._sm() as s:
+            item = await s.get(WatchItem, int(raw_id))
+            w = await s.get(Watch, item.slug) if item is not None else None
+        if item is None:
+            return
+        data = {
+            "kind": "watch",
+            "change": change,
+            "slug": item.slug,
+            "name": clip(w.name if w is not None else item.slug, 80),
+            "item": str(item.id),
+            "item_id": item.item_id,
+            "title": clip(item.title, WATCH_TITLE_CHARS),
+            "price": clip(item.price, 60),
+            "reason": clip(item.reason, WATCH_REASON_CHARS),
+            "url": item.url,
+            "reserved": "true" if item.reserved else "false",
+        }
+        await self._send(
+            "watches", "watch", f"{item.slug}:{item.item_id}:{change}", data, high=True,
+            ttl_s=WATCH_TTL_S, collapse_key=f"watch:{item.slug}:{item.item_id}",
         )  # fmt: skip
 
     async def _send(

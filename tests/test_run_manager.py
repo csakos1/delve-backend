@@ -362,3 +362,25 @@ async def test_recovery_resubmits_starting_run(h: Harness) -> None:
     run_id = load_json("protocol/e1.create.json")["run_id"]
     assert (await h.run(run_id)).status == "completed"
     assert [m.run_id for m in await h.messages("c_rec2")] == [run_id, run_id]
+
+
+def test_failed_run_reason_from_output() -> None:
+    """N73: Hermes 0.22.2 ends a run cut at the output limit with `run.failed`, no `error`,
+    the explanation in `output` (recorded 2026-10-27)."""
+    import json
+    from pathlib import Path
+
+    from delve.hermes.models import RunStatus
+    from delve.runs.manager import _error_text, _status_error
+
+    p = Path(__file__).resolve().parent / "fixtures" / "protocol" / "failed-partial.event.json"
+    data = json.loads(p.read_text())
+    assert data["partial"] is True and "error" not in data
+    assert _error_text(data) == data["output"][:500]
+    assert _error_text({**data, "event": "run.cancelled"}) is None
+    assert _error_text({**data, "error": "boom"}) == "boom"
+    assert _error_text({"event": "run.completed", "output": "x"}) is None
+    st = RunStatus(run_id="r", status="failed", output=data["output"])
+    assert _status_error(st) == data["output"]
+    assert _status_error(RunStatus(run_id="r", status="cancelled", output="x")) is None
+    assert _status_error(RunStatus(run_id="r", status="failed", turn_exit_reason="t")) == "t"

@@ -1,10 +1,13 @@
-"""In-process fake of llama-server's `/slots`, `/metrics`, `/health` and `/props`."""
+"""In-process fake of llama-server's `/slots`, `/metrics`, `/health`, `/props` and the
+chat completion the watchers' judge uses."""
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .fake_hermes import load_json
@@ -24,6 +27,12 @@ class FakeLlama:
         # /health: "ok" -> 200, "loading" -> 503, "gone" -> 500 (the client: unavailable)
         self.health = "ok"
         self.props: dict[str, Any] = load_json("system/llama-props.json")
+        # /v1/chat/completions: the request bodies, and what the "model" writes
+        self.chats: list[dict[str, Any]] = []
+        self.reply: Callable[[dict[str, Any]], str] = lambda body: json.dumps(
+            {"match": True, "reason": "Megfelel."}
+        )
+        self.chat_status = 200
         self.app = self._build()
 
     def set(self, *, task: int, processing: bool, tokens: int, decoded: int = 0) -> None:
@@ -60,6 +69,24 @@ class FakeLlama:
             if fake.health != "ok":
                 return JSONResponse({"error": fake.health}, status_code=503)
             return JSONResponse(fake.props)
+
+        @app.post("/v1/chat/completions")
+        async def chat(request: Request) -> Response:
+            body = await request.json()
+            fake.chats.append(body)
+            if fake.down or fake.chat_status != 200:
+                return JSONResponse({"error": "down"}, status_code=fake.chat_status or 503)
+            content = fake.reply(body)
+            return JSONResponse(
+                {
+                    "choices": [
+                        {"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": content}}
+                    ],
+                    "usage": {"prompt_tokens": 230, "completion_tokens": 40,
+                              "total_tokens": 270},
+                }
+            )  # fmt: skip
 
         @app.get("/metrics")
         async def metrics() -> Response:

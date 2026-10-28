@@ -36,6 +36,20 @@ _SCHEDULE = frozenset(
      "last_run_at", "last_status", "last_error", "last_run_id", "created_at", "updated_at"}
 )  # fmt: skip
 
+# W2: a watcher (also GET /api/v1/watches items) and one item it reported
+_WATCH = frozenset(
+    {"slug", "name", "source", "url", "criteria", "include", "any", "exclude", "min_price",
+     "max_price", "fetch_details", "stop_after_hit", "schedule", "state", "job_id",
+     "next_run_at", "last_check_at", "last_status", "last_error_code", "last_error",
+     "last_items", "last_matched", "errors_in_row", "hits", "hits_24h", "pending", "rejected",
+     "last_hit_at", "stopped_at", "defined_at", "updated_at"}
+)  # fmt: skip
+_WATCH_ITEM = frozenset(
+    {"id", "slug", "item_id", "title", "url", "price", "price_value", "location", "posted",
+     "excerpt", "reserved", "verdict", "reason", "seen_at", "judged_at", "notified_at",
+     "available_at"}
+)  # fmt: skip
+
 _CONTEXT = frozenset(
     {"conversation_id", "run_id", "tokens", "max", "pct", "warn", "source", "measured_at",
      "final"}
@@ -64,6 +78,8 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     "system.updated": _SYSTEM,
     "schedule.updated": _SCHEDULE,
     "schedule.deleted": frozenset({"id"}),
+    "watch.updated": _WATCH,
+    "watch.item": _WATCH_ITEM,
     "error": frozenset({"code", "message", "ref_id"}),
 }
 

@@ -123,6 +123,7 @@ class Notify(BaseModel):
     run_done: StrictBool | None = None
     water: StrictBool | None = None
     brief: StrictBool | None = None
+    watches: StrictBool | None = None
 
 
 class DevicePatch(BaseModel):

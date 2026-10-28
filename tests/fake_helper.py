@@ -30,10 +30,11 @@ class FakeHelper:
         self.llama = llama
         self.start_to = "loading"  # the fake llama's /health right after llama.start
         self.incidents = "closed"  # agent.incidents answer: closed | detected | none
+        self.jobs: list[dict[str, Any]] = []  # agent.cron.list (W2)
         self._server: socketserver.ThreadingUnixStreamServer | None = None
 
-    def answer(self, verb: str) -> dict[str, Any]:
-        self.calls.append(verb)
+    def answer(self, verb: str, arg: str | None = None) -> dict[str, Any]:
+        self.calls.append(verb if arg is None else f"{verb} {arg}")
         if verb in self.fail:
             code, msg = self.fail[verb]
             return {"ok": False, "error": code, "message": msg}
@@ -55,6 +56,16 @@ class FakeHelper:
             data = self.responses["host.status/ok"]
         elif verb == "agent.incidents":
             data = self.responses[f"agent.incidents/{self.incidents}"]
+        elif verb == "agent.cron.list":
+            data = {"jobs": [dict(j) for j in self.jobs]}
+        elif verb in ("agent.cron.pause", "agent.cron.resume", "agent.cron.run"):
+            job = next((j for j in self.jobs if j["id"] == arg), None)
+            if job is None:
+                return {"ok": False, "error": "failed", "message": "Job not found"}
+            if verb != "agent.cron.run":
+                paused = verb.endswith("pause")
+                job.update(state="paused" if paused else "scheduled", enabled=not paused)
+            data = {"job_id": arg, "action": verb.rsplit(".", 1)[1]}
         else:
             return {"ok": False, "error": "unknown_verb", "message": "unknown verb"}
         return {"ok": True, "verb": verb, "data": data}
@@ -66,7 +77,8 @@ class FakeHelper:
             def handle(self) -> None:
                 line = self.rfile.readline(2048)
                 try:
-                    verb = json.loads(line)["verb"]
+                    req = json.loads(line)
+                    verb, arg = req["verb"], req.get("arg")
                 except (ValueError, KeyError, TypeError):
                     out = {"ok": False, "error": "bad_request", "message": "bad"}
                 else:
@@ -74,7 +86,7 @@ class FakeHelper:
                         fake.calls.append(verb)
                         threading.Event().wait(5)
                         return
-                    out = fake.answer(verb)
+                    out = fake.answer(verb, arg)
                 self.wfile.write(json.dumps(out).encode() + b"\n")
 
         self._server = socketserver.ThreadingUnixStreamServer(str(self.path), Handler)

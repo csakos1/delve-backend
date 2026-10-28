@@ -1,0 +1,22 @@
+{
+ "seq": 206,
+ "event": "run.failed",
+ "usage": {
+  "input_tokens": 3796366,
+  "total_tokens": 3808450,
+  "output_tokens": 12084,
+  "cache_read_tokens": 3742160,
+  "cache_write_tokens": 0
+ },
+ "output": "The model's reply was cut off before it finished (it hit its output length limit), so Hermes didn't run the incomplete action. Nothing was changed. Send `continue`, ask for the work in smaller steps, or raise max_tokens for this model.",
+ "run_id": "run_aa59ffcd037b4aaead48eeaffdda109d",
+ "partial": true,
+ "runtime": {
+  "model": "/home/<operator>/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf",
+  "provider": "custom",
+  "route_source": "global"
+ },
+ "completed": false,
+ "timestamp": 1793120881.5513299,
+ "interrupted": false
+}

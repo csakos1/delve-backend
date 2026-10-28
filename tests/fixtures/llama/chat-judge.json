@@ -1,0 +1,36 @@
+{
+ "choices": [
+  {
+   "finish_reason": "stop",
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": "{\"match\": false, \"reason\": \"A szövegben szerepel a „bányászva” kifejezés, ami a feltétel tiltott szavai közé tartozik.\"}"
+   }
+  }
+ ],
+ "created": 1793188094,
+ "model": "/home/<operator>/models/qwen38/Qwen3.8-27B-UD-IQ4_XS.gguf",
+ "system_fingerprint": "b11673-e287bd872",
+ "object": "chat.completion",
+ "usage": {
+  "completion_tokens": 43,
+  "prompt_tokens": 272,
+  "total_tokens": 315,
+  "prompt_tokens_details": {
+   "cached_tokens": 0
+  }
+ },
+ "id": "chatcmpl-2KKkZqCrleLsaWroibW4SyYzSMiXrq0m",
+ "timings": {
+  "cache_n": 0,
+  "prompt_n": 272,
+  "prompt_ms": 458.601,
+  "prompt_per_token_ms": 1.686033088235294,
+  "prompt_per_second": 593.1081702831001,
+  "predicted_n": 43,
+  "predicted_ms": 2023.783,
+  "predicted_per_token_ms": 48.18530952380952,
+  "predicted_per_second": 20.753213165640783
+ }
+}

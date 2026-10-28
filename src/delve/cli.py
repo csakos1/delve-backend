@@ -36,7 +36,12 @@ HELPER_VERBS = (
     "agent.incidents",
     "llama.start",
     "llama.stop",
+    "agent.cron.list",
+    "agent.cron.pause",
+    "agent.cron.resume",
+    "agent.cron.run",
 )
+ARG_VERBS = ("agent.cron.pause", "agent.cron.resume", "agent.cron.run")
 
 
 def _db_url() -> str:
@@ -143,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     revoke.add_argument("device_id")
     helper = sub.add_parser("helper", help="ask the privileged helper (as the backend would)")
     helper.add_argument("verb", choices=HELPER_VERBS)
+    helper.add_argument("arg", nargs="?", help="the job id, for agent.cron.pause|resume|run")
     return parser
 
 
@@ -167,16 +173,19 @@ def _db_name() -> str:
         return "?"
 
 
-async def _helper(verb: str) -> int:
+async def _helper(verb: str, arg: str | None = None) -> int:
     from delve.brief import INCIDENTS_TIMEOUT_S
     from delve.system import CONTROL_TIMEOUT_S, STATUS_TIMEOUT_S, HelperClient, HelperFailed
+    from delve.watches import CRON_TIMEOUT_S
 
     path = Path(os.environ.get("DELVE_HELPER_SOCKET", "/run/delve-helper.sock"))
     timeout = CONTROL_TIMEOUT_S if verb in ("llama.start", "llama.stop") else STATUS_TIMEOUT_S
     if verb == "agent.incidents":
         timeout = INCIDENTS_TIMEOUT_S
+    elif verb.startswith("agent.cron."):
+        timeout = CRON_TIMEOUT_S
     try:
-        data = await HelperClient(path).call(verb, timeout_s=timeout)
+        data = await HelperClient(path).call(verb, arg=arg, timeout_s=timeout)
     except HelperFailed as exc:
         print(f"helper: {exc.code}: {exc.message}", file=sys.stderr)
         return 1
@@ -192,7 +201,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command in (None, "serve"):
         return _serve()
     if args.command == "helper":
-        return asyncio.run(_helper(args.verb))
+        if (args.arg is not None) != (args.verb in ARG_VERBS):
+            need = "needs a job id" if args.verb in ARG_VERBS else "takes no argument"
+            print(f"helper: {args.verb} {need}", file=sys.stderr)
+            return 2
+        return asyncio.run(_helper(args.verb, args.arg))
     try:
         return _db_commands(args)
     except ProgrammingError as exc:

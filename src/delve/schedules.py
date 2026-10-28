@@ -9,8 +9,10 @@ writes the morning brief card (delve.brief) instead.
 Due work: every `tick_s` (and whenever a schedule changes) the enabled schedules whose
 `next_run_at` has passed are fired once, then the next time is computed from now - missed
 times in between are not repeated. One that is late by more than `catchup_s` (the backend
-was down at the time; N20: one hour) is skipped and logged instead. A queued scheduled
-run waits like any other run, also while llama-server is held.
+was down at the time; N20: one hour) is skipped and logged instead - except the brief
+(N74): the same local day and at most `brief_late_s` late, it is written once the backend
+has been up for `brief_settle_s`, with `late_by_s`. A queued scheduled run waits like any
+other run, also while llama-server is held.
 
 Firing is idempotent: the run's `client_msg_id` and the brief's card id are derived from
 the schedule and the due time, so a crash between queueing and storing `next_run_at` does
@@ -207,6 +209,8 @@ class ScheduleService:
         *,
         tick_s: float = 30.0,
         catchup_s: float = 3600.0,
+        brief_late_s: float = 6 * 3600.0,
+        brief_settle_s: float = 180.0,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._sm = sessionmaker
@@ -215,7 +219,12 @@ class ScheduleService:
         self._brief = brief
         self._tick_s = tick_s
         self._catchup = timedelta(seconds=catchup_s)
+        # N74: a missed brief is still written later the same day, after the start settles
+        # (the agent's own catch-up runs - updates, water - come first)
+        self._brief_late = timedelta(seconds=brief_late_s)
+        self._brief_settle = timedelta(seconds=brief_settle_s)
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._started_at = self._clock()
         self._lock = asyncio.Lock()
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -224,6 +233,7 @@ class ScheduleService:
     # --- lifecycle -------------------------------------------------------------
 
     async def start(self) -> None:
+        self._started_at = self._clock()
         try:
             await self.ensure_brief()
         except Exception as exc:  # a database that is not up yet: the loop retries
@@ -413,7 +423,9 @@ class ScheduleService:
 
     # --- firing ----------------------------------------------------------------
 
-    async def _fire(self, sc: Schedule, due: datetime, *, manual: bool) -> dict[str, Any]:
+    async def _fire(
+        self, sc: Schedule, due: datetime, *, manual: bool, late: bool = False
+    ) -> dict[str, Any]:
         """Queue the prompt or write the brief, then store the outcome. Returns the refs."""
         now = self._clock()
         ref: dict[str, Any] = {"run_id": None, "card_id": None}
@@ -422,7 +434,8 @@ class ScheduleService:
         if sc.kind == "brief":
             card_id = uuid.uuid4().hex if manual else brief_card_id(sc.id, due)
             try:
-                card = await self._brief.publish(card_id, now)
+                late_by = int((now - due).total_seconds()) if late else None
+                card = await self._brief.publish(card_id, now, late_by_s=late_by)
                 ref["card_id"], status = card["id"], "ok"
             except Exception as exc:
                 log.exception("brief failed", extra={"schedule_id": str(sc.id)})
@@ -489,6 +502,10 @@ class ScheduleService:
                 if not sc.enabled or at is None or at > now:
                     continue
                 if now - at > self._catchup:
+                    if sc.kind == "brief" and self._brief_still_due(at, now):
+                        if now - self._started_at >= self._brief_settle:
+                            await self._fire(sc, at, manual=False, late=True)
+                        continue  # else: next tick
                     await self._skip(sc, now)
                 else:
                     await self._fire(sc, at, manual=False)
@@ -499,6 +516,11 @@ class ScheduleService:
                 )
             ).scalar_one()
         return nxt
+
+    def _brief_still_due(self, at: datetime, now: datetime) -> bool:
+        return (
+            now - at <= self._brief_late and at.astimezone(TZ).date() == now.astimezone(TZ).date()
+        )
 
     async def _skip(self, sc: Schedule, now: datetime) -> None:
         async with self._sm() as s:

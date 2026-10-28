@@ -18,7 +18,7 @@ import contextlib
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -182,6 +182,9 @@ class RunManager:
         self.idle = asyncio.Event()  # set while nothing is queued or active (tests)
         # set while llama-server is stopped on purpose (B3): queued runs wait, none starts
         self._hold = False
+        # W2: short llama work done between runs (the watchers' judge). Called while no run
+        # is queued or active and the queue is not held; True = it did something.
+        self.side_work: Callable[[], Awaitable[bool]] | None = None
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -554,6 +557,17 @@ class RunManager:
                 log.exception("queue read failed")
                 await asyncio.sleep(self._t.idle_poll_s)
                 continue
+            if qid is None and not self._hold and self.side_work is not None:
+                try:
+                    did = await self.side_work()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("side work failed")
+                    did = False
+                if did:
+                    self.idle.clear()
+                    continue  # look at the queue again before the next piece
             if qid is None or self._hold:
                 self.idle.set()
                 with contextlib.suppress(TimeoutError):
@@ -866,7 +880,7 @@ class RunManager:
                     output=status.output,
                     usage=status.usage.model_dump(exclude_none=True) if status.usage else None,
                     runtime=status.runtime,
-                    error=status.turn_exit_reason if status.status != "completed" else None,
+                    error=_status_error(status),
                 )
                 return
             if failures >= self._t.max_stream_failures:
@@ -1246,6 +1260,17 @@ def _dict(v: Any) -> dict[str, Any] | None:
     return v if isinstance(v, dict) else None
 
 
+def _status_error(status: RunStatus) -> str | None:
+    """The reason of a run that ended while the stream was away (N73, as `_error_text`)."""
+    if status.status == "completed":
+        return None
+    if status.turn_exit_reason:
+        return status.turn_exit_reason
+    if status.status == "failed" and status.output:
+        return status.output[:500]
+    return None
+
+
 def _error_text(data: dict[str, Any]) -> str | None:
     if data.get("event") == "run.completed":
         return None
@@ -1255,4 +1280,11 @@ def _error_text(data: dict[str, Any]) -> str | None:
     if isinstance(err, dict):
         return str(err.get("message") or err.get("code") or "error")[:500]
     reason = data.get("turn_exit_reason")
-    return reason if isinstance(reason, str) else None
+    if isinstance(reason, str) and reason:
+        return reason
+    # Hermes 0.22.2: a run that stops on its own (e.g. the reply hit the length limit) ends
+    # with `run.failed`, `partial: true` and the explanation in `output` (N73)
+    out = data.get("output")
+    if data.get("event") == "run.failed" and isinstance(out, str) and out:
+        return out[:500]
+    return None

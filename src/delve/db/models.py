@@ -21,6 +21,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -404,3 +405,92 @@ class GpuSample(Base):
     power_w: Mapped[float | None] = mapped_column(REAL)
     util_pct: Mapped[float | None] = mapped_column(REAL)
     mem_used_mib: Mapped[int | None] = mapped_column(Integer)
+
+
+class Watch(Base):
+    """A watcher (W): defined by the agent's `watch_manage` tool, run by a no-agent Hermes
+    cron job (`watch:<slug>`), known here from its `watch_def` / `watch_run` cards and the
+    helper's `agent.cron.list`. Deleting it happens in the chat (the files are the agent's);
+    a watcher whose cron job is gone is marked `deleted_at`.
+    """
+
+    __tablename__ = "watches"
+
+    slug: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    criteria: Mapped[str | None] = mapped_column(Text)
+    # include / any / exclude / min_price / max_price / fetch_details / notify_existing
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    stop_after_hit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    schedule: Mapped[str] = mapped_column(Text, nullable=False)
+    def_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    defined_at: Mapped[datetime] = mapped_column(TZ, nullable=False)
+    # from agent.cron.list: the job id, 'scheduled' | 'paused', next run, when last seen
+    job_id: Mapped[str | None] = mapped_column(Text)
+    job_state: Mapped[str | None] = mapped_column(Text)
+    next_run_at: Mapped[datetime | None] = mapped_column(TZ)
+    job_seen_at: Mapped[datetime | None] = mapped_column(TZ)
+    # the last watch_run card
+    last_check_at: Mapped[datetime | None] = mapped_column(TZ)
+    last_status: Mapped[str | None] = mapped_column(Text)
+    last_error_code: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_items: Mapped[int | None] = mapped_column(Integer)
+    last_matched: Mapped[int | None] = mapped_column(Integer)
+    errors_in_row: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # set when stop_after_hit paused the job after a hit
+    stopped_at: Mapped[datetime | None] = mapped_column(TZ)
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+    deleted_at: Mapped[datetime | None] = mapped_column(TZ)
+
+    __table_args__ = (
+        CheckConstraint("last_status IN ('ok','error')", name="last_status"),
+        CheckConstraint("job_state IN ('scheduled','paused')", name="job_state"),
+    )
+
+
+class WatchItem(Base):
+    """One listing a watcher reported (a `watch_candidate` card), with the verdict.
+
+    verdict: 'pending' (waits for the judge), 'match' / 'reject' (the judge's answer
+    against the watcher's criteria), 'mechanical' (no criteria: the filters decided),
+    'error' (the judge failed `attempts` times). `notify` is false for items read from
+    history (older than the push window) - they are judged but not pushed.
+    """
+
+    __tablename__ = "watch_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    item_id: Mapped[str] = mapped_column(Text, nullable=False)
+    card_id: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[str | None] = mapped_column(Text)
+    price_value: Mapped[int | None] = mapped_column(BigInteger)
+    location: Mapped[str | None] = mapped_column(Text)
+    posted: Mapped[str | None] = mapped_column(Text)
+    excerpt: Mapped[str | None] = mapped_column(Text)
+    reserved: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    notify: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    judge: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # ms, tokens
+    seen_at: Mapped[datetime] = mapped_column(TZ, nullable=False)  # the card's ts
+    judged_at: Mapped[datetime | None] = mapped_column(TZ)
+    notified_at: Mapped[datetime | None] = mapped_column(TZ)
+    available_at: Mapped[datetime | None] = mapped_column(TZ)  # "jegelve" lifted
+    created_at: Mapped[datetime] = _now()
+
+    __table_args__ = (
+        UniqueConstraint("slug", "item_id"),
+        CheckConstraint(
+            "verdict IN ('pending','match','reject','mechanical','error')", name="verdict"
+        ),
+        Index("ix_watch_items_slug_id", "slug", text("id DESC")),
+        Index("ix_watch_items_pending", "id", postgresql_where=text("verdict = 'pending'")),
+    )
