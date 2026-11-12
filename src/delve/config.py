@@ -96,6 +96,17 @@ class Settings(BaseSettings):
     llama_start_wait_s: Annotated[float, Field(gt=0, le=1800)] = Field(
         default=180.0, validation_alias=_env("DELVE_LLAMA_START_WAIT_S")
     )
+    # M: switching the model. A preset that exits while loading is retried by systemd every
+    # 10 s; this many failed starts in a row make the switch fail (a start can fail once or
+    # twice for lack of free GPU memory and then succeed).
+    llama_switch_restarts: Annotated[int, Field(ge=1, le=20)] = Field(
+        default=3, validation_alias=_env("DELVE_LLAMA_SWITCH_RESTARTS")
+    )
+    # The context window the agent works with (Hermes' `context_length`); llama-server's
+    # own window may be larger, the context fill of a chat is measured against this one.
+    agent_context: Annotated[int, Field(ge=1024)] = Field(
+        default=65536, validation_alias=_env("DELVE_AGENT_CONTEXT")
+    )
 
     # B4: schedules (the morning brief is one of them, its time is in the database)
     schedule_tick_s: Annotated[float, Field(gt=0, le=300)] = Field(

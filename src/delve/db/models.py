@@ -187,6 +187,8 @@ class Run(Base):
     error: Mapped[str | None] = mapped_column(Text)
     origin: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'app'"))
     schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # M: the model loaded when the run started, as shown ("Qwen3.8-27B · IQ4_XS")
+    model: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint("origin IN ('app','late_approval','schedule','system')", name="origin"),

@@ -112,7 +112,8 @@ async def conversation_usage(
     conversation_id: str,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> dict[str, Any]:
-    """Totals, context fill and the newest `limit` runs (oldest first) with usage and perf."""
+    """Totals, context fill and the newest `limit` runs (oldest first) with usage and perf;
+    `last_model` is the model of the newest of them that has one (M)."""
     async with _sessionmaker(request)() as s:
         conv = await s.get(Conversation, conversation_id)
         if conv is None:
@@ -130,6 +131,7 @@ async def conversation_usage(
         "conversation_id": conv.id,
         "totals": out["totals"],
         "context": out["context"],
+        "last_model": next((r.model for r in reversed(runs) if r.model), None),
         "runs": [run_out(r) for r in runs],
     }
 

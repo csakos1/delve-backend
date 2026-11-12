@@ -131,6 +131,9 @@ def test_rest_usage(client: TestClient, token: str, fake: FakeHermes) -> None:
     assert body["context"]["tokens"] == 8153 and body["context"]["max"] == 65536
     assert body["context"]["pct"] == 12.4 and body["context"]["warn"] is False
     runs = body["runs"]
+    # the model that answered (M): the app's fake llama serves the recorded /props
+    assert body["last_model"] == "Qwen3.8-27B · IQ4_XS"
+    assert [x["model"] for x in runs] == ["Qwen3.8-27B · IQ4_XS"] * 2
     assert [x["run_id"] for x in runs] == [
         load_json("protocol/e1.create.json")["run_id"],
         load_json("protocol/e2.create.json")["run_id"],

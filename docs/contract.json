@@ -1,5 +1,5 @@
 {
-  "api_revision": 9,
+  "api_revision": 10,
   "rest": [
     {
       "method": "GET",
@@ -244,6 +244,7 @@
       "conversation_id": true,
       "ended_at": true,
       "error": true,
+      "model": true,
       "origin": true,
       "perf": true,
       "queued_at": true,
@@ -257,6 +258,7 @@
       "conversation_id": true,
       "ended_at": true,
       "error": true,
+      "model": true,
       "origin": true,
       "perf": true,
       "position": true,
@@ -327,11 +329,16 @@
         "gen_tps": true,
         "intent": true,
         "model": true,
+        "models": "llama_model[]|null",
+        "preset": true,
         "quant": true,
         "since": true,
         "slots": true,
         "slots_busy": true,
-        "status": true
+        "status": true,
+        "switch": "llama_switch|null",
+        "thinking": true,
+        "vision": true
       },
       "queue": {
         "active": true,
@@ -347,6 +354,28 @@
       "power_w": true,
       "temp_c": true,
       "util_pct": true
+    },
+    "llama_model": {
+      "active": true,
+      "ctx": true,
+      "model": true,
+      "name": true,
+      "note": true,
+      "quant": true,
+      "reason": true,
+      "size_bytes": true,
+      "thinking": true,
+      "usable": true,
+      "vision": true
+    },
+    "llama_switch": {
+      "at": true,
+      "by": true,
+      "elapsed_s": true,
+      "error": true,
+      "from": true,
+      "state": true,
+      "to": true
     },
     "hermes_issue": {
       "check": true,

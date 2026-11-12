@@ -40,7 +40,7 @@ from delve.serialize import (
     step_out,
 )
 from delve.stats import GpuBucket, RunRow, stats_out
-from delve.system import Parts, gpu_out, hermes_issues, system_out
+from delve.system import Parts, gpu_out, hermes_issues, model_out, switch_out, system_out
 from delve.watches import item_out, watch_out
 
 _T = datetime(2026, 1, 1, tzinfo=UTC)
@@ -77,6 +77,8 @@ def shapes() -> dict[str, Any]:
     )  # fmt: skip
     system["hermes"]["issues"] = "hermes_issue[]"
     system["gpus"] = "gpu[]|null"
+    system["llama"]["models"] = "llama_model[]|null"
+    system["llama"]["switch"] = "llama_switch|null"
     issue = hermes_issues({"readiness": {"checks": {"disk": {"status": "degraded"}}}})[0]
     sched = Schedule(
         id=uuid.UUID(int=1), kind="prompt", name="n", cron="30 7 * * *", prompt="p",
@@ -115,6 +117,11 @@ def shapes() -> dict[str, Any]:
         # B3: GET /api/v1/system and the system.updated event
         "system": system,
         "gpu": _keys(gpu_out({})),
+        # M: the model presets of llama-server (reason: no_model|model_missing|
+        # mmproj_missing|no_context|context_below_64k; thinking: toggle|always|none) and
+        # the switch in progress or the one that failed (state: switching|failed|down)
+        "llama_model": _keys(model_out({"name": "n"}, None)),
+        "llama_switch": _keys(switch_out("switching", src="a", to="b", by="d", at="t")),
         "hermes_issue": _keys(issue),
         # B4: GET /api/v1/schedules items, schedule.updated
         "schedule": _keys(schedule_out(sched)),

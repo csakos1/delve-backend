@@ -16,6 +16,11 @@ answers for those samples: the `data` of `bin/delve-helper`'s `parse_show` / `pa
 run over `llama-show-*.txt`, `hermes-show-running.txt` and `gpu-*.csv` there, keyed
 `<verb>/<state>`. Regenerate it when the helper's output changes.
 
+`system/helper-responses.json` also holds, recorded on the host on 2026-11-11 through the
+helper's socket (M): `llama.models/presets` (five presets, one of them unusable),
+`llama.select/ok`, and `llama.status/auto-restart` (a preset that exits while loading,
+in systemd's restart loop).
+
 `system/helper-responses.json` also holds `host.status/ok` and `agent.incidents/{closed,
 detected,none}` (B4): `host_status()` over `proc-*.txt` and `parse_incidents()` over
 `incidents-*.txt` of `delve-infra` `tests/fixtures/system/` (`detected` is that repository's

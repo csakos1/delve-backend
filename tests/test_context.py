@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve.db.models import Conversation
 from delve.events import Envelope
 from delve.llama import LlamaClient, Slot, parse_metrics
-from delve.runs.context import ContextTracker, Measurement, throughput
+from delve.runs.context import ContextMeter, ContextTracker, Measurement, throughput
 
 from .fake_hermes import FIXTURES, StreamingASGITransport, load_json, load_text
 from .fake_llama import FakeLlama
@@ -294,3 +294,30 @@ async def test_totals_and_usage_fallback(hl: Harness, llama: FakeLlama) -> None:
     )
     e2 = await hl.run(load_json("protocol/e2.create.json")["run_id"])
     assert e2.perf is not None and e2.perf["context_source"] == "usage"
+
+
+async def test_fill_is_measured_against_the_agents_window() -> None:
+    """llama-server may run with a larger window than Hermes works with (M)."""
+    fl = FakeLlama()
+    fl.slot = {**fl.slot, "n_ctx": 98304}
+    fl.set(task=100, processing=False, tokens=300)
+    client = LlamaClient("http://llama", transport=StreamingASGITransport(fl.app))
+    try:
+        seen: list[Measurement] = []
+        meter = ContextMeter(client, interval_s=0.01, on_sample=seen.append, max_ctx=65536)
+        await meter.prepare()
+        fl.set(task=101, processing=True, tokens=32768)
+        meter.start()
+        async with asyncio.timeout(5):
+            while not seen:  # noqa: ASYNC110
+                await asyncio.sleep(0.01)
+        fl.set(task=101, processing=False, tokens=32800)
+        m, _ = await meter.finish(usage=None, tool_steps=1)
+        assert (seen[0].max, seen[0].pct) == (65536, 50.0)
+        assert m is not None and (m.tokens, m.max) == (32800, 65536)
+        # without a cap, and with a window smaller than the cap, the slot's size stands
+        plain = ContextMeter(client, interval_s=0.01)
+        assert plain._capped(Measurement(1, 98304, "sample")).max == 98304
+        assert meter._capped(Measurement(1, 32768, "sample")).max == 32768
+    finally:
+        await client.aclose()

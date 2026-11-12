@@ -116,21 +116,21 @@ needs `Authorization: Bearer <device token>`.
 |---|---|---|
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
 | `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm, push, notify}`; `push`: the server can send pushes |
-| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?, watches?}}` (booleans; left-out keys keep their value) → the device |
+| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?, watches?, system?}}` (booleans; left-out keys keep their value) → the device |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
 | `DELETE` | `/api/v1/devices/me` | unpair: revokes the calling token (and its FCM token) → 204 |
 | `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
 | `GET` | `/api/v1/conversations?limit=&cursor=&archived=` | newest first, keyset cursor |
 | `GET` | `/api/v1/conversations/{id}` | one conversation |
 | `GET` | `/api/v1/conversations/{id}/messages?before=&limit=` | oldest first |
-| `GET` | `/api/v1/conversations/{id}/usage?limit=` | totals, context, runs with `usage`/`perf` |
+| `GET` | `/api/v1/conversations/{id}/usage?limit=` | totals, context, runs with `usage`/`perf`/`model`; `last_model`: the model that answered last |
 | `PATCH` | `/api/v1/conversations/{id}` | `{thinking?, archived?}` |
 | `GET` | `/api/v1/approvals?status=pending,expired_in_hermes` | approval inbox |
 | `POST` | `/api/v1/approvals/{request_id}` | `{choice: once\|session\|deny}` |
 | `GET` | `/api/v1/cards?type=&since=&limit=` | cards newest first (`ts`); `since` with a timezone |
 | `GET` | `/api/v1/runs/open` | the queue: active run first, then queued ones; each with `position` (runs ahead) |
 | `GET` | `/api/v1/system` | the `system` view (below); one answer is reused for 2 s |
-| `POST` | `/api/v1/system/llama` | `{action: start\|stop, force?}` → the `system` view; 409 `run_active` (stop without `force` while a run is active), 503 `helper_unavailable`, 502 `helper_failed` |
+| `POST` | `/api/v1/system/llama` | `{action: start\|stop\|switch\|dismiss, force?, model?}` → the `system` view; `switch` takes `model` (a preset name from `llama.models`), `dismiss` forgets a failed switch; 409 `run_active` (stop or switch without `force` while a run is active), `already_active`, `model_not_usable`, `switch_in_progress`; 404 `unknown_model`; 503 `helper_unavailable`, 502 `helper_failed` |
 | `GET` | `/api/v1/schedules` | `{data: [schedule]}`, the morning brief first |
 | `POST` | `/api/v1/schedules` | `{name, cron, prompt, conversation_mode?: new\|fixed, conversation_id?, thinking?, enabled?}` → 201 `schedule`; 422 `invalid_cron`, `too_frequent`, `invalid_name`, `invalid_prompt`, `conversation_required`, `conversation_not_found`; 409 `too_many` (50) |
 | `PATCH` | `/api/v1/schedules/{id}` | any of the fields above → `schedule`; the brief takes only `cron` and `enabled` (422 `brief_fields`) |
@@ -227,7 +227,9 @@ every run (a tool step means another call over the whole history), so `totals` i
 not size; `context` is how full the window is.
 
 Context comes from llama-server's `/slots` (`n_prompt_tokens` includes the tokens decoded so
-far). The slot is sampled every second while a run is active, published as
+far); `max` is the slot's window but at most `DELVE_AGENT_CONTEXT` (65536, Hermes'
+`context_length`): llama-server may run with a larger window than the agent works with,
+and Hermes compresses by its own. The slot is sampled every second while a run is active, published as
 `context.updated {conversation_id, run_id, tokens, max, pct, warn, source, measured_at,
 final}`, and the run's last call is stored when it ends. Hermes' session-title call starts
 about 0.2 s after a run and overwrites the slot, so tasks seen before the run, newer tasks
@@ -269,7 +271,7 @@ is released) is one object:
 | `checked_at` | when it was put together |
 | `helper` | `{ok, error}`: the privileged helper answered every question (`error`: the first problem, e.g. `helper_unavailable`) |
 | `hermes` | `{status: ok\|degraded\|down\|unknown, version, since, issues: [{check, status, detail}]}` - `degraded` and `issues` from `/health/detailed` (e.g. `disk`, `96% used`); `since`: the gateway unit's start |
-| `llama` | `{status, intent, since, model, quant, ctx, slots, slots_busy, gen_tps}`; `status`: `running`, `loading` (unit active, `/health` 503), `starting`, `stopping`, `stopped`, `failed`, `down` (no helper and no answer), `unknown`; `intent`: `stopped` (stopped from here) or `starting` (started, model loading), else `null`; `since`: the unit's last start (running) or stop; `model`/`quant`/`ctx` from `/props` (file name only, never the path); `gen_tps`: the last completed run's generation speed |
+| `llama` | `{status, intent, since, model, quant, ctx, slots, slots_busy, gen_tps, preset, vision, thinking, models, switch}` (the last five: **Models** below; `switch`: `{state, from, to, by, at, error, elapsed_s}` or `null`); `status`: `running`, `loading` (unit active, `/health` 503), `starting`, `stopping`, `stopped`, `failed`, `down` (no helper and no answer), `unknown`; `intent`: `stopped` (stopped from here) or `starting` (started, model loading), else `null`; `since`: the unit's last start (running) or stop; `model`/`quant`/`ctx` from `/props` (file name only, never the path); `gen_tps`: the last completed run's generation speed |
 | `queue` | `{active, queued}` runs |
 | `gpus` | `[{index, name, temp_c, mem_used_mib, mem_total_mib, util_pct, power_w, power_limit_w}]` from `nvidia-smi`, `null` without the helper; a value the driver does not report is `null` |
 
@@ -277,7 +279,8 @@ The unit has no capabilities, no devices and its own user namespace, so the unit
 `nvidia-smi` and starting/stopping llama-server go through the privileged helper of
 delve-infra (`bin/delve-helper`, socket-activated on `DELVE_HELPER_SOCKET`,
 `/run/delve-helper.sock`, group `delve`): one JSON line per connection, fixed verbs
-`llama.status|start|stop`, `hermes.status`, `gpu.status` (and for the brief `host.status`,
+`llama.status|start|stop`, `llama.models`, `llama.select <preset>`, `hermes.status`,
+`gpu.status` (and for the brief `host.status`,
 `agent.incidents`). `sudo delve helper <verb>` asks it
 the same way the server does. Without the helper the view still answers (`helper.ok:
 false`, llama state from `/health`, no GPUs) and stop/start answer 503.
@@ -292,6 +295,28 @@ elsewhere (terminal, reboot) releases the queue within 15 s. A llama-server that
 without being stopped from here is not held for: runs fail as before. The slot count is
 kept (`system_state['llama_slots']`), so a stopped llama-server still shows it after a
 backend restart; a failing `/slots` read is logged once (`llama /slots not readable`).
+
+**Models.** The loaded model is a state of the machine: one preset file per model on the
+host (`delve-infra` `llama/presets/`), and the helper's `llama.models` / `llama.select`
+list them and move the pointer llama-server loads from. The view's `llama` carries
+`preset` (the selected one), `models` (`llama_model[]`; `null` when the helper cannot list
+them), `vision` and `thinking` (what the loaded - or, while stopped, the selected - model
+can do) and `switch`. **Switching** (`action: switch`) while llama-server runs is stop,
+select, start with the queue held: messages sent meanwhile wait and run on the new model;
+an active run is refused with 409 unless `force`, which stops it first. `switch.state` is
+`switching` until `/health` answers. A preset that keeps exiting while it loads
+(`DELVE_LLAMA_SWITCH_RESTARTS`, 3 failed starts in a row - one or two can be a passing
+lack of GPU memory) or is not up in `DELVE_LLAMA_START_WAIT_S` makes the switch fail: the
+previous preset is selected and started again, `switch.state` becomes `failed`
+(`error`: `exited` or `timeout`) and stays until `action: dismiss` or the next switch,
+also across a backend restart (`system_state['llama_switch']`). If the previous one does
+not come up either, the state is `down` and the queue stays held as after a stop, until
+llama-server is healthy again. Both ends are pushed (`system`, below). While llama-server
+is **stopped**, `switch` only moves the selection: Start loads it. Every run stores the
+model that was loaded when it started (`run.model`, e.g. `Qwen3.8-27B · IQ4_XS`; the
+preset's label replaces the name from the file). A message with an image is refused with
+`model_no_vision` while the loaded (or selected) model has no projector, and a preset
+marked as not thinking sends its runs the plain route whatever the chat's switch says.
 
 ### Schedules and the morning brief
 
@@ -408,7 +433,8 @@ Up to four per message. The app uploads each one first (`POST /api/v1/attachment
 file per request, no multipart), then lists the ids in `chat.send`; the send binds them to
 its user message in the same transaction and fails as a whole otherwise:
 `too_many_attachments`, `duplicate_attachment`, `attachment_not_found`,
-`attachment_gone`, `attachment_used` (an id can be sent once; `…/copy` makes a new one).
+`attachment_gone`, `attachment_used` (an id can be sent once; `…/copy` makes a new one),
+`model_no_vision` (an image while the loaded model cannot read images; the upload stays).
 User messages from REST, `sync` and `message.created` carry `attachments`
 (`[attachment]`: `{id, kind, mime, filename, size_bytes, message_id, available, created_at}`);
 other messages have an empty list.
@@ -441,6 +467,7 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 | `card` | `card_id, type` (`water`), `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
 | `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, late_by_s, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
 | `watch` | `change` (`hit`/`available`), `slug, name, item` (the `watch_item` id), `item_id, title` (≤ 120), `price, reason` (≤ 240), `url, reserved` (`true`/`false`) | a watcher's hit, and a reserved hit that became available, to devices with `notify.watches` (on by default); high priority, collapse key `watch:<slug>:<item_id>`, TTL 24 h |
+| `system` | `event` (`switch_failed`/`switch_down`), `to`, `back` (model names as shown; `back` empty when there was nothing to go back to), `at` | a model switch that did not work: the previous model is loaded again (`switch_failed`) or llama-server is not running (`switch_down`), to devices with `notify.system` (on by default); high priority, collapse key `llama-switch`, TTL 6 h |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
 Every kind goes with high priority: a normal-priority message waits while the phone
@@ -448,7 +475,7 @@ dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
-milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`); revoked devices and devices without an FCM token get nothing.
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`, `system`); revoked devices and devices without an FCM token get nothing.
 Whether the phone has a socket open does not matter: a phone locked a moment ago may
 still look connected here for up to a minute (its close never arrived), so the log line
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An

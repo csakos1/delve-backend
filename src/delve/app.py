@@ -81,6 +81,7 @@ def create_app(
             expected_version=settings.hermes_expected_version,
             llama=llama,
             attachments=attachments,
+            agent_context=settings.agent_context,
         )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
@@ -127,8 +128,11 @@ def create_app(
             llama,
             helper,
             start_wait_s=settings.llama_start_wait_s,
+            switch_restarts=settings.llama_switch_restarts,
+            notify_switch=push.model_switch,
             **(system_options or {}),
         )
+        manager.active_model = system.active_model
         app.state.system = system
         schedules = ScheduleService(
             sessionmaker,

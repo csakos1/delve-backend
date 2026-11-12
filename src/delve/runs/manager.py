@@ -148,6 +148,25 @@ class _Ctx:
     measure_first_delta: bool = True  # not for a run resumed after a restart
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveModel:
+    """The model llama-server has loaded, as far as it is known (M). `thinking` is the
+    preset's mode: toggle | always | none."""
+
+    label: str | None = None
+    vision: bool | None = None
+    thinking: str | None = None
+
+
+class ModelRefused(Exception):
+    """The loaded model cannot take this message (an image for a text-only model)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class RunManager:
     def __init__(
         self,
@@ -160,10 +179,12 @@ class RunManager:
         expected_version: str | None = None,
         llama: LlamaClient | None = None,
         attachments: AttachmentStore | None = None,
+        agent_context: int | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._llama = llama
         self._attachments = attachments
+        self._agent_context = agent_context
         self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
         self._expected_version = expected_version
         self.hermes_ok: bool | None = None  # None until the first health poll
@@ -185,6 +206,17 @@ class RunManager:
         # W2: short llama work done between runs (the watchers' judge). Called while no run
         # is queued or active and the queue is not held; True = it did something.
         self.side_work: Callable[[], Awaitable[bool]] | None = None
+        # M: which model is loaded (set by the SystemService); None: nobody knows
+        self.active_model: Callable[[], Awaitable[ActiveModel]] | None = None
+
+    async def _model_now(self) -> ActiveModel:
+        if self.active_model is None:
+            return ActiveModel()
+        try:
+            return await self.active_model()
+        except Exception:
+            log.exception("active model not readable")
+            return ActiveModel()
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -247,6 +279,7 @@ class RunManager:
             raise InvalidRequest("empty message")
         if len(text) > MAX_INPUT_CHARS:
             raise InvalidRequest(f"message longer than {MAX_INPUT_CHARS} characters")
+        text_only = bool(attachment_ids) and (await self._model_now()).vision is False
         async with self._sm() as s:
             prev = await self._replay(s, client_msg_id)
             if prev is not None:
@@ -292,6 +325,9 @@ class RunManager:
                 bound = await self._attachments.bind(
                     s, attachment_ids, conversation_id=conv.id, message_id=msg.id
                 )
+                if text_only and any(a.kind == "image" for a in bound):
+                    # nothing is committed yet: leaving here rolls the message back
+                    raise ModelRefused("model_no_vision", "the loaded model cannot read images")
             conv.preview = preview_text(text) or attachments_preview(bound) or conv.preview
             try:
                 await s.commit()
@@ -629,6 +665,7 @@ class RunManager:
     # --- one run ---------------------------------------------------------------
 
     async def _execute(self, qid: str, *, resume: bool = False) -> None:
+        model = await self._model_now()
         async with self._sm() as s:
             run = await s.get(Run, qid)
             if run is None or run.status != ("starting" if resume else "queued"):
@@ -636,6 +673,9 @@ class RunManager:
             conv = _must(await s.get(Conversation, run.conversation_id))
             if run.schedule_id is None:  # a scheduled run keeps the schedule's setting
                 run.thinking = conv.thinking  # the state when the run starts decides the route
+            if model.thinking == "none":  # the preset says this model does not think
+                run.thinking = False
+            run.model = model.label or run.model
             run.status, run.started_at = "starting", run.started_at or now()
             await s.commit()
             conv_id, thinking, key = conv.id, run.thinking, run.idempotency_key
@@ -830,7 +870,9 @@ class RunManager:
     def _new_meter(self) -> ContextMeter | None:
         if self._llama is None:
             return None
-        return ContextMeter(self._llama, interval_s=self._t.context_poll_s)
+        return ContextMeter(
+            self._llama, interval_s=self._t.context_poll_s, max_ctx=self._agent_context
+        )
 
     def _publish_context(self, ctx: _Ctx, m: Measurement, *, final: bool) -> None:
         self._hub.publish(

@@ -107,5 +107,95 @@
  },
  "agent.incidents/none": {
   "incidents": []
- }
+ },
+  "llama.status/auto-restart": {
+    "active_state": "activating",
+    "sub_state": "auto-restart",
+    "result": "exit-code",
+    "active_since": 1794423861,
+    "inactive_since": 1794423861,
+    "main_pid": null,
+    "restarts": 0
+  },
+  "llama.models/presets": {
+    "active": "qwen38-27b-iq4xs",
+    "models": [
+      {
+        "name": "qwen38-27b-iq4xs",
+        "file": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+        "label": null,
+        "note": null,
+        "ctx": 98304,
+        "vision": true,
+        "thinking": "toggle",
+        "size_bytes": 14252845984,
+        "usable": true,
+        "reason": null
+      },
+      {
+        "name": "test-64k",
+        "file": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+        "label": "Qwen3.8-27B 64K",
+        "note": "test: same model, 64K context",
+        "ctx": 65536,
+        "vision": true,
+        "thinking": "toggle",
+        "size_bytes": 14252845984,
+        "usable": true,
+        "reason": null
+      },
+      {
+        "name": "test-crash",
+        "file": "test-crash.gguf",
+        "label": "Broken on purpose",
+        "note": null,
+        "ctx": 65536,
+        "vision": false,
+        "thinking": "toggle",
+        "size_bytes": 11,
+        "usable": true,
+        "reason": null
+      },
+      {
+        "name": "test-missing",
+        "file": "does-not-exist.gguf",
+        "label": null,
+        "note": null,
+        "ctx": 65536,
+        "vision": false,
+        "thinking": "toggle",
+        "size_bytes": null,
+        "usable": false,
+        "reason": "model_missing"
+      },
+      {
+        "name": "test-text",
+        "file": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+        "label": "Qwen3.8-27B text",
+        "note": "test: no image input, no thinking",
+        "ctx": 65536,
+        "vision": false,
+        "thinking": "none",
+        "size_bytes": 14252845984,
+        "usable": true,
+        "reason": null
+      }
+    ]
+  },
+  "llama.select/ok": {
+    "active": "test-64k",
+    "previous": "qwen38-27b-iq4xs",
+    "model": {
+      "name": "test-64k",
+      "file": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+      "label": "Qwen3.8-27B 64K",
+      "note": "test: same model, 64K context",
+      "ctx": 65536,
+      "vision": true,
+      "thinking": "toggle",
+      "size_bytes": 14252845984,
+      "usable": true,
+      "reason": null
+    }
+  }
 }

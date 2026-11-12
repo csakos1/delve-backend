@@ -2,11 +2,15 @@
 
 A threaded unix-socket server, so it answers both the TestClient's event loop and the
 test's own. Answers come from `fixtures/system/helper-responses.json`; `llama.stop` and
-`llama.start` flip the state (and, if given, the fake llama's /health).
+`llama.start` flip the state (and, if given, the fake llama's /health). `llama.models` and
+`llama.select` work on the recorded preset listing; a preset named in `crash` never comes
+up: after `llama.start` the unit is in systemd's restart loop, one more restart per status
+read.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import socketserver
 import tempfile
@@ -31,6 +35,13 @@ class FakeHelper:
         self.start_to = "loading"  # the fake llama's /health right after llama.start
         self.incidents = "closed"  # agent.incidents answer: closed | detected | none
         self.jobs: list[dict[str, Any]] = []  # agent.cron.list (W2)
+        # M: model presets
+        listing = copy.deepcopy(self.responses["llama.models/presets"])
+        self.presets: list[dict[str, Any]] = listing["models"]
+        self.active: str | None = listing["active"]
+        self.crash: set[str] = {"test-crash"}
+        self.restarts = 0
+        self.models_verb = True  # False: an older helper without llama.models
         self._server: socketserver.ThreadingUnixStreamServer | None = None
 
     def answer(self, verb: str, arg: str | None = None) -> dict[str, Any]:
@@ -43,11 +54,38 @@ class FakeHelper:
             if self.llama is not None:
                 self.llama.health = "gone"
         elif verb == "llama.start":
-            self.state = "running"
-            if self.llama is not None:
-                self.llama.health = self.start_to
-        if verb in ("llama.status", "llama.stop", "llama.start"):
-            data = self.responses[f"llama.status/{self.state}"]
+            self.restarts = 0
+            if self.active in self.crash:
+                self.state = "auto-restart"
+                if self.llama is not None:
+                    self.llama.health = "gone"
+            else:
+                self.state = "running"
+                if self.llama is not None:
+                    self.llama.health = self.start_to
+                    self._load(self.llama)
+        if verb in ("llama.models", "llama.select") and not self.models_verb:
+            return {"ok": False, "error": "unknown_verb", "message": "unknown verb"}
+        if verb == "llama.models":
+            data = {"active": self.active, "models": copy.deepcopy(self.presets)}
+        elif verb == "llama.select":
+            row = next((m for m in self.presets if m["name"] == arg), None)
+            if row is None:
+                return {"ok": False, "error": "unknown_model", "message": f"no preset {arg}"}
+            if not row["usable"]:
+                return {"ok": False, "error": "model_not_usable",
+                        "message": f"preset {arg}: {row['reason']}"}  # fmt: skip
+            data = {"active": arg, "previous": self.active, "model": dict(row)}
+            self.active = arg
+        elif verb == "llama.status" and self.state == "auto-restart":
+            data = {**self.responses["llama.status/auto-restart"], "restarts": self.restarts}
+            self.restarts += 1
+        elif verb in ("llama.status", "llama.stop", "llama.start"):
+            data = self.responses[
+                "llama.status/auto-restart"
+                if self.state == "auto-restart"
+                else f"llama.status/{self.state}"
+            ]
         elif verb == "hermes.status":
             data = self.responses["hermes.status/running"]
         elif verb == "gpu.status":
@@ -69,6 +107,17 @@ class FakeHelper:
         else:
             return {"ok": False, "error": "unknown_verb", "message": "unknown verb"}
         return {"ok": True, "verb": verb, "data": data}
+
+    def _load(self, llama: FakeLlama) -> None:
+        """The fake llama answers /props for the preset that was just started."""
+        row = next((m for m in self.presets if m["name"] == self.active), None)
+        if row is None or not row.get("file"):
+            return
+        props = copy.deepcopy(llama.props)
+        props["model_path"] = f"/home/operator/models/{row['file']}"
+        props["default_generation_settings"]["n_ctx"] = row["ctx"]
+        props["modalities"] = {**(props.get("modalities") or {}), "vision": row["vision"]}
+        llama.props = props
 
     def start(self) -> FakeHelper:
         fake = self

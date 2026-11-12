@@ -30,7 +30,7 @@ from delve.db.models import Conversation, Message
 from delve.events import EventHub, Subscription
 from delve.push import Presence
 from delve.runs.approvals import ApprovalError, ApprovalService
-from delve.runs.manager import InvalidRequest, NotFound, RunManager
+from delve.runs.manager import InvalidRequest, ModelRefused, NotFound, RunManager
 from delve.serialize import conversation_out
 from delve.status import snapshot
 
@@ -219,7 +219,7 @@ async def _handle(
         await _send(ws, _error(fid, "invalid_request", str(exc)))
     except NotFound as exc:
         await _send(ws, _error(fid, "not_found", str(exc)))
-    except AttachmentError as exc:
+    except (AttachmentError, ModelRefused) as exc:
         await _send(ws, _error(fid, exc.code, exc.message))
 
 

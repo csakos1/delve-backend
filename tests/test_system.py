@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -18,9 +19,11 @@ from delve.app import create_app
 from delve.config import Settings
 from delve.db.models import Run, SystemState
 from delve.llama import LlamaClient, Props, model_label
+from delve.runs.manager import ActiveModel
 from delve.system import (
     INTENT_KEY,
     SLOTS_KEY,
+    SWITCH_KEY,
     HelperClient,
     HelperFailed,
     HelperUnavailable,
@@ -30,6 +33,10 @@ from delve.system import (
     hermes_issues,
     hermes_state,
     llama_state,
+    loaded_label,
+    model_out,
+    model_text,
+    switch_out,
     system_out,
 )
 
@@ -63,7 +70,10 @@ def test_model_label(path: str, ftype: str | None, want: tuple[str, str | None])
 
 
 def test_props_from_recording() -> None:
-    assert Props(model="Qwen3.8-27B", quant="IQ4_XS", n_ctx=65536, slots=1) == PROPS
+    assert Props(
+        model="Qwen3.8-27B", quant="IQ4_XS", n_ctx=65536, slots=1,
+        file="Qwen3.8-27B-UD-IQ4_XS.gguf", vision=True,
+    ) == PROPS  # fmt: skip
     with pytest.raises(KeyError):
         Props.parse({"total_slots": 1})
 
@@ -119,6 +129,8 @@ def test_view_running_from_recordings() -> None:
         "status": "running", "intent": None, "since": "2026-10-20T23:03:54+00:00",
         "model": "Qwen3.8-27B", "quant": "IQ4_XS", "ctx": 65536, "slots": 1,
         "slots_busy": 0, "gen_tps": 21.4,
+        # without the helper's preset listing: only what /props says
+        "preset": None, "vision": True, "thinking": None, "models": None, "switch": None,
     }  # fmt: skip
     assert out["queue"] == {"active": 1, "queued": 1}
     assert [(g["name"], g["mem_used_mib"], g["mem_total_mib"]) for g in out["gpus"]] == [
@@ -288,7 +300,9 @@ async def test_snapshot_running(sysenv: Sys) -> None:
     )  # fmt: skip
     assert (llama["slots"], llama["slots_busy"], llama["gen_tps"]) == (1, 0, 21.4)
     assert snap["queue"] == {"active": 0, "queued": 0} and len(snap["gpus"]) == 2
-    assert sorted(sysenv.helper.calls) == ["gpu.status", "hermes.status", "llama.status"]
+    assert sorted(sysenv.helper.calls) == [
+        "gpu.status", "hermes.status", "llama.models", "llama.status",
+    ]  # fmt: skip
 
 
 @pg
@@ -296,9 +310,9 @@ async def test_snapshot_cache(sysenv: Sys) -> None:
     sysenv.svc._cache_s = 60.0
     a = await sysenv.svc.snapshot()
     b = await sysenv.svc.snapshot()
-    assert a is b and len(sysenv.helper.calls) == 3
-    await sysenv.svc.snapshot(fresh=True)
-    assert len(sysenv.helper.calls) == 6
+    assert a is b and len(sysenv.helper.calls) == 4
+    await sysenv.svc.snapshot(fresh=True)  # the preset listing is kept for half a minute
+    assert len(sysenv.helper.calls) == 7
 
 
 @pg
@@ -609,3 +623,342 @@ async def test_intent_read_later_when_the_database_was_not_up(sysenv: Sys) -> No
 
 async def _is(value: bool) -> bool:
     return value
+
+
+# --- model presets and switching (M) ------------------------------------------------------
+
+PRESETS = R["llama.models/presets"]
+MAIN = "qwen38-27b-iq4xs"
+
+
+def test_models_from_the_recorded_listing() -> None:
+    rows = {m["name"]: m for m in (model_out(m, PRESETS["active"]) for m in PRESETS["models"])}
+    assert list(rows) == [MAIN, "test-64k", "test-crash", "test-missing", "test-text"]
+    assert rows[MAIN] == {
+        "name": MAIN, "model": "Qwen3.8-27B", "quant": "IQ4_XS", "note": None, "ctx": 98304,
+        "vision": True, "thinking": "toggle", "size_bytes": 14252845984, "usable": True,
+        "reason": None, "active": True,
+    }  # fmt: skip
+    # a label replaces the name from the file, the quantization stays
+    assert (rows["test-64k"]["model"], rows["test-64k"]["quant"]) == ("Qwen3.8-27B 64K", "IQ4_XS")
+    assert rows["test-64k"]["note"] == "test: same model, 64K context"
+    assert (rows["test-text"]["vision"], rows["test-text"]["thinking"]) == (False, "none")
+    missing = rows["test-missing"]
+    assert (missing["usable"], missing["reason"], missing["size_bytes"]) == (
+        False, "model_missing", None,
+    )  # fmt: skip
+    assert not any(m["active"] for n, m in rows.items() if n != MAIN)
+    assert model_out({"name": "x", "thinking": "sometimes"}, None)["thinking"] == "toggle"
+    assert model_out({"name": "x"}, None)["model"] == "x"
+    assert model_text("Qwen3.8-27B", "IQ4_XS") == "Qwen3.8-27B · IQ4_XS"
+    assert model_text("mystery", None) == "mystery"
+
+
+def test_view_with_presets() -> None:
+    def view(active: str, **kw: Any) -> dict[str, Any]:
+        parts = Parts(checked_at=T0, presets={**PRESETS, "active": active}, **kw)
+        return system_out(parts)["llama"]
+
+    running = {"llama_unit": R["llama.status/running"], "llama_healthy": True, "props": PROPS}
+    llama = view(MAIN, **running)
+    assert (llama["preset"], llama["model"], llama["quant"]) == (MAIN, "Qwen3.8-27B", "IQ4_XS")
+    assert (llama["vision"], llama["thinking"], llama["switch"]) == (True, "toggle", None)
+    assert [m["name"] for m in llama["models"] if m["active"]] == [MAIN]
+    # the loaded file is the selected preset's file: its label is the name shown
+    assert view("test-64k", **running)["model"] == "Qwen3.8-27B 64K"
+    # the pointer names another file than the one loaded: the file name speaks
+    other = {**PRESETS, "active": "test-crash"}
+    assert loaded_label(PROPS, other) == ("Qwen3.8-27B", "IQ4_XS")
+    # stopped: what Start will load
+    stopped = view("test-text", llama_unit=R["llama.status/stopped"], intent="stopped")
+    assert (stopped["status"], stopped["preset"], stopped["model"]) == (
+        "stopped", "test-text", None,
+    )  # fmt: skip
+    assert (stopped["vision"], stopped["thinking"]) == (False, "none")
+    sw = {"state": "failed", "from": MAIN, "to": "test-crash", "by": "pixel",
+          "at": T0.isoformat(), "error": "exited", "elapsed_s": 31}  # fmt: skip
+    assert view(MAIN, switch=sw, **running)["switch"] == sw
+    # the unit in systemd's restart loop reads as starting
+    assert llama_state(R["llama.status/auto-restart"], None) == "starting"
+
+
+async def _switched(sysenv: Sys, state: str | None) -> None:
+    async with asyncio.timeout(5):
+        while (sysenv.svc.switch or {}).get("state") != state or sysenv.svc._starting:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+
+
+async def _switch_row(db: async_sessionmaker[AsyncSession]) -> dict[str, Any] | None:
+    async with db() as s:
+        row = await s.get(SystemState, SWITCH_KEY)
+    return dict(row.value) if row else None
+
+
+@pg
+async def test_snapshot_lists_the_models(sysenv: Sys) -> None:
+    llama = (await sysenv.svc.snapshot())["llama"]
+    assert llama["preset"] == MAIN and len(llama["models"]) == 5
+    assert (llama["vision"], llama["thinking"]) == (True, "toggle")
+    am = await sysenv.svc.active_model()
+    assert am == ActiveModel("Qwen3.8-27B · IQ4_XS", True, "toggle")
+
+    # an older helper without the verb: no list, and no error on the screen
+    sysenv.helper.models_verb = False
+    sysenv.svc._presets = None
+    snap = await sysenv.svc.snapshot(fresh=True)
+    assert snap["llama"]["models"] is None and snap["llama"]["preset"] is None
+    assert snap["helper"] == {"ok": True, "error": None}
+    assert snap["llama"]["model"] == "Qwen3.8-27B" and snap["llama"]["vision"] is True
+    assert (await sysenv.svc.active_model()).label == "Qwen3.8-27B · IQ4_XS"
+
+
+@pg
+async def test_switch_loads_another_preset(sysenv: Sys) -> None:
+    h, svc, helper = sysenv.h, sysenv.svc, sysenv.helper
+    h.mgr.active_model = svc.active_model
+    await h.mgr.start()
+    snap = await svc.switch_llama("test-64k", force=False, by="pixel")
+    assert helper.calls[:5] == [
+        "llama.models", "llama.status", "llama.stop", "llama.select test-64k", "llama.start",
+    ]  # fmt: skip
+    # then the snapshot's reads, in any order (the listing is read again: it changed)
+    assert sorted(helper.calls[5:]) == [
+        "gpu.status", "hermes.status", "llama.models", "llama.status",
+    ]  # fmt: skip
+    sw = snap["llama"]["switch"]
+    assert (sw["state"], sw["from"], sw["to"], sw["by"]) == ("switching", MAIN, "test-64k", "pixel")
+    assert (snap["llama"]["status"], snap["llama"]["intent"]) == ("loading", "starting")
+    assert snap["llama"]["preset"] == "test-64k" and h.mgr.held
+    assert (await _switch_row(h.db) or {}).get("state") == "switching"
+
+    # a message sent meanwhile waits for the new model
+    h.fake.enqueue("protocol/a")
+    _, qid = await h.send("hello")
+    await asyncio.sleep(0.2)
+    assert (await h.run(qid)).status == "queued"
+    with pytest.raises(SystemConflict) as exc:
+        await svc.switch_llama(MAIN, force=False, by="pixel")
+    assert exc.value.code == "switch_in_progress"
+
+    sysenv.llama.health = "ok"  # loaded
+    await _switched(sysenv, None)
+    await h.settle()
+    assert not h.mgr.held and svc.intent is None and await _switch_row(h.db) is None
+    last = sysenv.events("system.updated")[-1]["llama"]
+    assert (last["status"], last["model"], last["ctx"], last["switch"]) == (
+        "running", "Qwen3.8-27B 64K", 65536, None,
+    )  # fmt: skip
+    async with h.db() as s:
+        run = (await s.execute(select(Run))).scalar_one()
+    assert (run.status, run.model) == ("completed", "Qwen3.8-27B 64K · IQ4_XS")
+
+
+@pg
+async def test_switch_refusals(sysenv: Sys) -> None:
+    h, svc, helper = sysenv.h, sysenv.svc, sysenv.helper
+
+    async def code(model: str, *, force: bool = False) -> str:
+        with pytest.raises(SystemConflict) as exc:
+            await svc.switch_llama(model, force=force, by="pixel")
+        return exc.value.code
+
+    assert await code("nope") == "unknown_model"
+    assert await code("test-missing") == "model_not_usable"
+    assert await code(MAIN) == "already_active"
+    assert not any(
+        c.startswith(("llama.stop", "llama.select", "llama.start")) for c in helper.calls
+    )
+
+    h.fake.enqueue("protocol/f", pause_before_seq=1)
+    await h.mgr.start()
+    await h.send("sleep 60")
+    async with asyncio.timeout(5):
+        while not (h.mgr.active_run_id or "").startswith("run_"):  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+    assert await code("test-64k") == "run_active"
+    assert not h.mgr.held and "llama.stop" not in helper.calls and svc.switch is None
+
+    # force: the run is stopped first
+    helper.start_to = "ok"
+    await svc.switch_llama("test-64k", force=True, by="pixel")
+    await _switched(sysenv, None)
+    await h.settle()
+    async with h.db() as s:
+        run = (await s.execute(select(Run))).scalar_one()
+    assert run.status == "cancelled" and helper.active == "test-64k"
+
+
+@pg
+async def test_failed_switch_goes_back(sysenv: Sys) -> None:
+    h, svc, helper = sysenv.h, sysenv.svc, sysenv.helper
+    pushes: list[tuple[str, dict[str, Any]]] = []
+    svc._notify_switch = lambda state, **kw: pushes.append((state, kw))
+    helper.start_to = "ok"  # the previous model loads at once when it is started again
+    await h.mgr.start()
+    await svc.switch_llama("test-crash", force=False, by="pixel")
+    await _switched(sysenv, "failed")
+    assert helper.active == MAIN and not h.mgr.held and svc.intent is None
+    moves = [
+        c for c in helper.calls if c.split()[0] in ("llama.stop", "llama.select", "llama.start")
+    ]
+    assert moves == [
+        "llama.stop", "llama.select test-crash", "llama.start",
+        "llama.stop", f"llama.select {MAIN}", "llama.start",
+    ]  # fmt: skip
+    sw = svc.switch or {}
+    assert (sw["state"], sw["from"], sw["to"], sw["error"]) == (
+        "failed", MAIN, "test-crash", "exited",
+    )  # fmt: skip
+    assert isinstance(sw["elapsed_s"], int) and await _switch_row(h.db) == sw
+    assert pushes == [
+        ("failed", {"to": "Broken on purpose", "back": "Qwen3.8-27B · IQ4_XS", "at": sw["at"]})
+    ]
+    last = sysenv.events("system.updated")[-1]["llama"]
+    assert (last["status"], last["preset"], last["switch"]["state"]) == ("running", MAIN, "failed")
+
+    # it stays until it is dismissed, also across a backend restart
+    fresh = SystemService(h.db, h.mgr, h.hub, h.hermes, svc._llama, svc._helper)
+    await fresh._load_intent()
+    assert fresh.switch == sw
+    snap = await svc.dismiss_switch()
+    assert snap["llama"]["switch"] is None and await _switch_row(h.db) is None
+
+
+@pg
+async def test_one_failed_start_is_not_a_failed_switch(sysenv: Sys) -> None:
+    """A start can fail for lack of free GPU memory and succeed on systemd's retry."""
+    svc, helper = sysenv.svc, sysenv.helper
+    helper.crash.add("test-64k")
+    await svc.switch_llama("test-64k", force=False, by="pixel")
+    async with asyncio.timeout(5):
+        while helper.restarts < 2:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+    helper.crash.discard("test-64k")  # the next retry loads
+    helper.state, sysenv.llama.health = "running", "ok"
+    await _switched(sysenv, None)
+    assert helper.active == "test-64k" and svc.switch is None and not sysenv.h.mgr.held
+
+
+@pg
+async def test_failed_switch_with_no_way_back(sysenv: Sys) -> None:
+    h, svc, helper = sysenv.h, sysenv.svc, sysenv.helper
+    pushes: list[str] = []
+    svc._notify_switch = lambda state, **kw: pushes.append(state)
+    helper.crash.add(MAIN)
+    await h.mgr.start()
+    await svc.switch_llama("test-crash", force=False, by="pixel")
+    await _switched(sysenv, "down")
+    assert pushes == ["down"] and helper.active == MAIN
+    # like a stop on purpose: the queue waits
+    assert h.mgr.held and svc.intent == "stopped"
+    assert (await _intent_row(h.db) or {}).get("state") == "stopped"
+    assert (await svc.dismiss_switch())["llama"]["switch"]["state"] == "down"
+
+    # the operator picks a preset that works and starts it
+    helper.crash.clear()
+    helper.state = "stopped"
+    await svc.switch_llama("test-64k", force=False, by="pixel")
+    assert helper.active == "test-64k" and "llama.start" not in helper.calls[-4:]
+    helper.start_to = "ok"
+    await svc.start_llama(by="pixel")
+    async with asyncio.timeout(5):
+        while h.mgr.held:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+    assert svc.switch is None and await _switch_row(h.db) is None and svc.intent is None
+
+
+@pg
+async def test_select_while_stopped_only_moves_the_pointer(sysenv: Sys) -> None:
+    svc, helper = sysenv.svc, sysenv.helper
+    await svc.stop_llama(force=False, by="pixel")
+    n = len(helper.calls)
+    snap = await svc.switch_llama("test-text", force=False, by="pixel")
+    assert [c for c in helper.calls[n:] if c.startswith("llama.s")] == [
+        "llama.status", "llama.select test-text", "llama.status",
+    ]  # fmt: skip
+    llama = snap["llama"]
+    assert (llama["status"], llama["preset"], llama["switch"]) == ("stopped", "test-text", None)
+    assert (llama["vision"], llama["thinking"], llama["model"]) == (False, "none", None)
+    am = await svc.active_model()  # nothing loaded: the selected preset answers
+    assert am == ActiveModel(None, False, "none")
+    # selecting it again is fine while stopped
+    await svc.switch_llama("test-text", force=False, by="pixel")
+
+    helper.start_to = "ok"
+    await svc.start_llama(by="pixel")
+    async with asyncio.timeout(5):
+        while sysenv.h.mgr.held:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+    llama = (await svc.snapshot(fresh=True))["llama"]
+    assert (llama["status"], llama["model"], llama["vision"]) == (
+        "running", "Qwen3.8-27B text", False,
+    )  # fmt: skip
+    assert await svc.active_model() == ActiveModel("Qwen3.8-27B text · IQ4_XS", False, "none")
+
+
+@pg
+async def test_stop_during_a_switch_ends_it(sysenv: Sys) -> None:
+    svc = sysenv.svc
+    await svc.switch_llama("test-64k", force=False, by="pixel")
+    assert (svc.switch or {}).get("state") == "switching"
+    snap = await svc.stop_llama(force=False, by="pixel")
+    assert snap["llama"]["switch"] is None and svc.switch is None and svc._starting is None
+    assert (snap["llama"]["status"], snap["llama"]["preset"]) == ("stopped", "test-64k")
+    assert await _switch_row(sysenv.h.db) is None and sysenv.h.mgr.held
+
+
+@pg
+async def test_a_switch_cut_short_by_a_restart_is_dropped(sysenv: Sys) -> None:
+    svc = sysenv.svc
+    await svc._set_switch(
+        switch_out("switching", src=MAIN, to="test-64k", by="pixel", at=T0.isoformat())
+    )
+    fresh = SystemService(sysenv.h.db, sysenv.h.mgr, sysenv.h.hub, sysenv.h.hermes,
+                          svc._llama, svc._helper)  # fmt: skip
+    await fresh._load_intent()
+    assert fresh.switch is None and await _switch_row(sysenv.h.db) is None
+
+
+@pg
+async def test_a_half_done_switch_starts_what_is_selected(sysenv: Sys) -> None:
+    h, svc, helper = sysenv.h, sysenv.svc, sysenv.helper
+    helper.fail["llama.select"] = ("failed", "ln: failed to create symbolic link")
+    helper.start_to = "ok"
+    with pytest.raises(HelperFailed):
+        await svc.switch_llama("test-64k", force=False, by="pixel")
+    async with asyncio.timeout(5):
+        while h.mgr.held or svc._starting:  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+    assert helper.active == MAIN and helper.state == "running" and svc.switch is None
+
+
+@pg
+def test_api_switch(sys_client: tuple[TestClient, FakeHelper, FakeLlama], token: str) -> None:
+    c, helper, _ = sys_client
+
+    def post(body: dict[str, Any]) -> Any:
+        return c.post("/api/v1/system/llama", json=body, headers=auth(token))
+
+    for bad in ({"action": "switch"}, {"action": "stop", "model": MAIN},
+                {"action": "switch", "model": "../x"}, {"action": "switch", "model": "A"},
+                {"action": "dismiss", "model": MAIN}):  # fmt: skip
+        assert post(bad).status_code == 422, bad
+    r = post({"action": "switch", "model": "nope"})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "unknown_model"
+    r = post({"action": "switch", "model": "test-missing"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "model_not_usable"
+    assert post({"action": "switch", "model": MAIN}).json()["detail"]["code"] == "already_active"
+
+    helper.start_to = "ok"
+    r = post({"action": "switch", "model": "test-64k"})
+    assert r.status_code == 200, r.text
+    assert r.json()["llama"]["switch"]["to"] == "test-64k"
+    body: dict[str, Any] = {}
+    for _ in range(200):
+        body = c.get("/api/v1/system", headers=auth(token)).json()
+        if body["llama"]["switch"] is None and body["llama"]["status"] == "running":
+            break
+        time.sleep(0.02)
+    assert (body["llama"]["preset"], body["llama"]["ctx"]) == ("test-64k", 65536)
+    assert protocol.check_event("system.updated", body) is None
+    assert post({"action": "dismiss"}).status_code == 200

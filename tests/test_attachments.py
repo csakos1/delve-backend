@@ -31,7 +31,8 @@ from delve.attachments import (
 )
 from delve.config import Settings
 from delve.contract import shapes
-from delve.db.models import Attachment, Conversation
+from delve.db.models import Attachment, Conversation, Message, Run
+from delve.runs.manager import ActiveModel, ModelRefused
 
 from .fake_hermes import FakeHermes, StreamingASGITransport
 from .fake_llama import FakeLlama
@@ -238,6 +239,33 @@ async def test_a_missing_file_becomes_a_note(ha: Harness, store: AttachmentStore
     body = run_bodies(ha.fake)[0]
     assert body["input"] == "look"
     assert body["instructions"] == "An image the user attached (lost.jpg) is no longer available."
+
+
+async def test_an_image_is_refused_by_a_text_only_model(
+    ha: Harness, store: AttachmentStore
+) -> None:
+    async def text_only() -> ActiveModel:
+        return ActiveModel("Qwen3.8-27B text · IQ4_XS", False, "none")
+
+    ha.mgr.active_model = text_only
+    img, doc = await image(store), await file(store)
+    with pytest.raises(ModelRefused) as err:
+        await ha.send("what is this?", attachment_ids=[img])
+    assert err.value.code == "model_no_vision"
+    async with ha.db() as s:  # nothing was stored, the upload can still be sent later
+        assert (await s.execute(select(Message))).first() is None
+        assert (await s.get(Attachment, img)).message_id is None  # type: ignore[union-attr]
+    # a file is not an image; and an unknown model refuses nothing
+    ha.fake.enqueue("protocol/e1")
+    await ha.send("read it", attachment_ids=[doc])
+    await ha.settle()
+    async with ha.db() as s:
+        run = (await s.execute(select(Run))).scalar_one()
+    # the preset says this model does not think: the run goes the plain route
+    assert (run.model, run.thinking) == ("Qwen3.8-27B text · IQ4_XS", False)
+    ha.mgr.active_model = None
+    ha.fake.enqueue("protocol/e2")
+    await ha.send("and this?", attachment_ids=[img])
 
 
 async def test_binding_rules(ha: Harness, store: AttachmentStore) -> None:

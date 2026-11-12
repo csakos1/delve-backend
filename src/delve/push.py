@@ -78,6 +78,7 @@ NOTIFY_DEFAULTS: Mapping[str, bool] = {
     "water": False,
     "brief": False,
     "watches": True,
+    "system": True,
 }
 ANSWERABLE = frozenset({"pending", "expired_in_hermes"})
 COMMAND_CHARS = 80  # N5: the notification shows the start of the command
@@ -89,6 +90,7 @@ RESOLVED_TTL_S = 24 * 3600
 RUN_DONE_TTL_S = 6 * 3600
 CARD_TTL_S = 12 * 3600
 WATCH_TTL_S = 24 * 3600
+SYSTEM_TTL_S = 6 * 3600
 WATCH_TITLE_CHARS = 120
 WATCH_REASON_CHARS = 240
 # a card read from history (first ingest, a replaced file) is not news
@@ -363,7 +365,7 @@ def _fcm_error_code(r: httpx.Response) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Job:
-    kind: str  # "approval" | "run" | "card" | "watch"
+    kind: str  # "approval" | "run" | "card" | "watch" | "system"
     ref: str
     delay_s: float = 0.0
 
@@ -416,6 +418,13 @@ class PushService:
         if self.enabled:
             self._queue.put_nowait(_Job("watch", f"{item_id}:{change}"))
 
+    def model_switch(self, state: str, *, to: str, back: str | None, at: str) -> None:
+        """A model switch that did not work (M): "failed" - the previous model is loaded
+        again, "down" - llama-server is not running. Called by the SystemService."""
+        if self.enabled:
+            ref = json.dumps({"state": state, "to": to, "back": back, "at": at})
+            self._queue.put_nowait(_Job("system", ref))
+
     async def start(self) -> None:
         if self.enabled and self._task is None:
             self._task = asyncio.create_task(self._worker(), name="push")
@@ -445,6 +454,8 @@ class PushService:
                     await self._card(job.ref)
                 elif job.kind == "watch":
                     await self._watch(job.ref)
+                elif job.kind == "system":
+                    await self._system(job.ref)
                 else:
                     await self._run_done(job.ref)
             except asyncio.CancelledError:
@@ -575,6 +586,20 @@ class PushService:
         await self._send(
             "watches", "watch", f"{item.slug}:{item.item_id}:{change}", data, high=True,
             ttl_s=WATCH_TTL_S, collapse_key=f"watch:{item.slug}:{item.item_id}",
+        )  # fmt: skip
+
+    async def _system(self, ref: str) -> None:
+        d = json.loads(ref)
+        data = {
+            "kind": "system",
+            "event": f"switch_{d['state']}",
+            "to": clip(d.get("to"), 80),
+            "back": clip(d.get("back"), 80),
+            "at": str(d.get("at") or ""),
+        }
+        await self._send(
+            "system", "system", f"switch:{data['at']}", data, high=True, ttl_s=SYSTEM_TTL_S,
+            collapse_key="llama-switch",
         )  # fmt: skip
 
     async def _send(

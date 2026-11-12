@@ -122,6 +122,7 @@ def test_notify_settings_and_clip() -> None:
         "water": False,
         "brief": False,
         "watches": True,
+        "system": True,
     }
     got = notify_settings({"run_done": False, "water": "yes", "other": True})
     assert got == {
@@ -130,6 +131,7 @@ def test_notify_settings_and_clip() -> None:
         "water": False,
         "brief": False,
         "watches": True,
+        "system": True,
     }
     assert clip("  a \n b  ", 80) == "a b"
     assert clip("x" * 100, 80) == "x" * 79 + "…"
@@ -402,6 +404,32 @@ async def test_run_done(rig: Rig) -> None:
 
 
 @pg
+async def test_a_failed_model_switch_is_pushed(rig: Rig) -> None:
+    at = "2026-11-11T19:04:21+00:00"
+    rig.push.model_switch("failed", to="Broken on purpose", back="Qwen3.8-27B · IQ4_XS", at=at)
+    await rig.drain()
+    msg, other = rig.google.sends  # "quiet" only opted out of approvals and finished runs
+    assert (msg["token"], other["token"]) == ("fcm-pixel", "fcm-quiet")
+    assert msg["android"]["priority"] == "HIGH"
+    assert msg["android"]["collapse_key"] == "llama-switch"
+    assert msg["data"] == {
+        "kind": "system", "event": "switch_failed", "to": "Broken on purpose",
+        "back": "Qwen3.8-27B · IQ4_XS", "at": at,
+    }  # fmt: skip
+    # the device's own switch for it, and the case with no model to go back to
+    async with rig.h.db() as s:
+        await s.execute(
+            update(Device).where(Device.id == rig.devices["pixel"]).values(notify={"system": False})
+        )
+        await s.commit()
+    rig.push.model_switch("down", to="Broken on purpose", back=None, at=at)
+    await rig.drain()
+    assert [m["token"] for m in rig.google.sends[2:]] == ["fcm-quiet"]
+    assert rig.google.sends[2]["data"]["event"] == "switch_down"
+    assert rig.google.sends[2]["data"]["back"] == ""
+
+
+@pg
 async def test_run_done_despite_a_live_socket_but_not_for_short_runs(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -507,6 +535,7 @@ def test_devices_me_notify(client: TestClient, token: str) -> None:
         "water": False,
         "brief": False,
         "watches": True,
+        "system": True,
     }
 
     r = client.patch(
@@ -519,6 +548,7 @@ def test_devices_me_notify(client: TestClient, token: str) -> None:
         "water": False,
         "brief": False,
         "watches": True,
+        "system": True,
     }
     r = client.patch("/api/v1/devices/me", headers=_auth(token), json={"notify": {"water": True}})
     assert r.json()["notify"]["run_done"] is False and r.json()["notify"]["water"] is True

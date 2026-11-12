@@ -85,6 +85,7 @@ def run_out(r: Run) -> dict[str, Any]:
         "usage": r.usage,
         "perf": r.perf,
         "error": r.error,
+        "model": r.model,
     }
 
 

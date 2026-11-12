@@ -79,6 +79,8 @@ class Props:
     quant: str | None
     n_ctx: int | None
     slots: int | None
+    file: str | None = None  # the model's file name: which preset is loaded (M)
+    vision: bool | None = None  # `modalities.vision`: a projector is loaded
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> Props:
@@ -90,11 +92,15 @@ class Props:
         dgs = raw.get("default_generation_settings")
         n_ctx = dgs.get("n_ctx") if isinstance(dgs, dict) else None
         slots = raw.get("total_slots")
+        modalities = raw.get("modalities")
+        vision = modalities.get("vision") if isinstance(modalities, dict) else None
         return cls(
             model=name,
             quant=quant,
             n_ctx=n_ctx if isinstance(n_ctx, int) else None,
             slots=slots if isinstance(slots, int) else None,
+            file=PurePosixPath(path).name or None,
+            vision=vision if isinstance(vision, bool) else None,
         )
 
 

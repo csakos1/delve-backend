@@ -124,6 +124,7 @@ class Notify(BaseModel):
     water: StrictBool | None = None
     brief: StrictBool | None = None
     watches: StrictBool | None = None
+    system: StrictBool | None = None
 
 
 class DevicePatch(BaseModel):

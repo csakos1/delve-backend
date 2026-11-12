@@ -10,6 +10,12 @@ Stopping llama-server on purpose holds the run queue (queued runs wait instead o
 failing) until it is started again from here, or until the maintenance watch sees it
 healthy after a start from elsewhere. The intent survives a backend restart
 (`system_state['llama_intent']`).
+
+The loaded model is a state of the machine (M): one preset file per model on the host,
+`active.env` names the one llama-server loads. The helper lists them (`llama.models`) and
+moves the pointer (`llama.select`); switching is stop, select, start with the queue held,
+and going back to the previous preset when the new one does not come up
+(`system_state['llama_switch']` keeps what happened until it is dismissed).
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import contextlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,12 +38,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve.db.models import ACTIVE_RUN_STATUSES, Run, SystemState
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, HermesError, HermesUnavailable
-from delve.llama import LlamaClient, LlamaUnavailable, Props
-from delve.runs.manager import NotFound, RunManager
+from delve.llama import LlamaClient, LlamaUnavailable, Props, model_label
+from delve.runs.manager import ActiveModel, NotFound, RunManager
 
 log = logging.getLogger("delve.system")
 
 INTENT_KEY = "llama_intent"
+SWITCH_KEY = "llama_switch"  # the switch in progress, or the one that failed (M)
+MODELS_CACHE_S = 30.0  # the helper's preset listing; dropped whenever we change something
+SWITCH_STATUS_EVERY = 3  # while a model loads: one unit-status read per this many polls
+THINKING_MODES = ("toggle", "always", "none")
 SLOTS_KEY = "llama_slots"  # the slot count from the last /props, for a stopped llama (N51)
 STATUS_TIMEOUT_S = 15.0  # helper's own systemctl show limit is 10 s
 CONTROL_TIMEOUT_S = 45.0  # stop/start (25 s) + the status read after it (10 s)
@@ -175,6 +186,64 @@ def gpu_out(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: raw.get(k) for k in GPU_KEYS}
 
 
+def model_out(raw: dict[str, Any], active: str | None) -> dict[str, Any]:
+    """One preset from the helper -> what the app lists. The name shown is the preset's
+    label or, without one, the model's file name without the quantization."""
+    file = raw.get("file")
+    name, quant = model_label(file, None) if isinstance(file, str) and file else (None, None)
+    thinking = raw.get("thinking")
+    return {
+        "name": raw["name"],
+        "model": raw.get("label") or name or raw["name"],
+        "quant": quant,
+        "note": raw.get("note"),
+        "ctx": raw.get("ctx"),
+        "vision": raw.get("vision") is True,
+        "thinking": thinking if thinking in THINKING_MODES else "toggle",
+        "size_bytes": raw.get("size_bytes"),
+        "usable": raw.get("usable") is True,
+        "reason": raw.get("reason"),
+        "active": raw["name"] == active,
+    }
+
+
+def _preset(listing: dict[str, Any] | None, name: str | None) -> dict[str, Any] | None:
+    if not listing or name is None:
+        return None
+    return next((m for m in listing["models"] if m["name"] == name), None)
+
+
+def loaded_label(props: Props | None, listing: dict[str, Any] | None) -> tuple[str, str | None]:
+    """(name, quant) of the loaded model: the active preset's label when the loaded file is
+    that preset's file, otherwise what the file name says."""
+    assert props is not None  # noqa: S101
+    row = _preset(listing, listing.get("active") if listing else None)
+    if row and row.get("label") and row.get("file") and row["file"] == props.file:
+        return str(row["label"]), props.quant
+    return props.model, props.quant
+
+
+def model_text(name: str, quant: str | None) -> str:
+    return f"{name} · {quant}" if quant else name
+
+
+def switch_out(
+    state: str,
+    *,
+    src: str | None,
+    to: str,
+    by: str | None,
+    at: str,
+    error: str | None = None,
+    elapsed_s: int | None = None,
+) -> dict[str, Any]:
+    """`llama.switch` in the view. state: switching | failed (the previous model is back)
+    | down (llama-server is not running); error: exited | timeout; `from`/`to` are preset
+    names; `elapsed_s`: how long the new model was given."""
+    return {"state": state, "from": src, "to": to, "by": by, "at": at, "error": error,
+            "elapsed_s": elapsed_s}  # fmt: skip
+
+
 @dataclass
 class Parts:
     checked_at: datetime
@@ -193,6 +262,8 @@ class Parts:
     active_runs: int = 0
     queued_runs: int = 0
     gpus: list[dict[str, Any]] | None = None
+    presets: dict[str, Any] | None = None  # the helper's llama.models, None: not known
+    switch: dict[str, Any] | None = None
 
 
 def system_out(p: Parts) -> dict[str, Any]:
@@ -209,6 +280,14 @@ def system_out(p: Parts) -> dict[str, Any]:
     elif state in ("stopped", "failed"):
         busy = 0
     h_unit = p.hermes_unit or {}
+    active = p.presets.get("active") if p.presets else None
+    selected = _preset(p.presets, active)
+    name, quant = loaded_label(p.props, p.presets) if live else (None, None)
+    vision: bool | None = None
+    if live and p.props is not None and p.props.vision is not None:
+        vision = p.props.vision
+    elif selected is not None:
+        vision = selected.get("vision") is True
     return {
         "checked_at": p.checked_at.isoformat(),
         "helper": {
@@ -227,12 +306,19 @@ def system_out(p: Parts) -> dict[str, Any]:
             "status": state,
             "intent": p.intent,
             "since": since,
-            "model": p.props.model if live and p.props else None,
-            "quant": p.props.quant if live and p.props else None,
+            "model": name,
+            "quant": quant,
             "ctx": p.props.n_ctx if live and p.props else None,
             "slots": p.props.slots if p.props else p.known_slots,
             "slots_busy": busy,
             "gen_tps": p.gen_tps,
+            # M: the preset `active.env` points to (what Start loads while stopped), what
+            # the loaded or selected model can do, every preset, and the last switch
+            "preset": active,
+            "vision": vision,
+            "thinking": model_out(selected, active)["thinking"] if selected else None,
+            "models": [model_out(m, active) for m in p.presets["models"]] if p.presets else None,
+            "switch": dict(p.switch) if p.switch else None,
         },
         "queue": {"active": p.active_runs, "queued": p.queued_runs},
         "gpus": [gpu_out(g) for g in p.gpus] if p.gpus is not None else None,
@@ -256,6 +342,8 @@ class SystemService:
         ready_poll_s: float = 1.0,
         watch_s: float = 15.0,
         cache_s: float = 2.0,
+        switch_restarts: int = 3,
+        notify_switch: Callable[..., None] | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._mgr = manager
@@ -277,6 +365,12 @@ class SystemService:
         self._watch: asyncio.Task[None] | None = None
         self.intent: str | None = None  # "stopped" | "starting" | None
         self._intent_loaded = False
+        # M: model presets and the switch between them
+        self._switch_restarts = switch_restarts
+        self._notify_switch = notify_switch  # PushService.model_switch
+        self._presets: tuple[float, dict[str, Any]] | None = None
+        self._presets_error: str | None = None  # the last listing failure, logged once
+        self.switch: dict[str, Any] | None = None  # state: switching | failed | down
 
     # --- lifecycle -------------------------------------------------------------
 
@@ -310,6 +404,15 @@ class SystemService:
             self.intent = "stopped"
             self._mgr.hold(True)
             log.info("llama-server stopped on purpose; queue held", extra=dict(row.value))
+        with contextlib.suppress(Exception):
+            async with self._sm() as s:
+                sw = await s.get(SystemState, SWITCH_KEY)
+            value = dict(sw.value) if sw is not None and isinstance(sw.value, dict) else None
+            if value and value.get("state") in ("failed", "down"):
+                self.switch = value
+            elif value:  # the backend restarted in the middle of a switch: nobody waits now
+                log.warning("a model switch was cut short by a restart", extra=value)
+                await self._set_switch(None)
 
     async def close(self) -> None:
         tasks = [t for t in (self._watch, self._starting) if t is not None]
@@ -346,6 +449,77 @@ class SystemService:
         except Exception as exc:
             log.warning("slot count not saved", extra={"error": type(exc).__name__})
 
+    # --- model presets (M) ------------------------------------------------------
+
+    async def _fetch_listing(self) -> dict[str, Any]:
+        data = await self._helper.call("llama.models", timeout_s=STATUS_TIMEOUT_S)
+        models = data.get("models")
+        rows = [
+            m
+            for m in (models if isinstance(models, list) else [])
+            if isinstance(m, dict) and isinstance(m.get("name"), str)
+        ]
+        active = data.get("active")
+        out = {"active": active if isinstance(active, str) else None, "models": rows}
+        self._presets = (time.monotonic(), out)
+        self._presets_error = None
+        return out
+
+    async def _listing(self) -> dict[str, Any] | None:
+        """The presets, a little stale at most; None when the helper cannot say (an older
+        helper, no socket): the view then has no model list, nothing else changes."""
+        if self._presets and time.monotonic() - self._presets[0] < MODELS_CACHE_S:
+            return self._presets[1]
+        try:
+            return await self._fetch_listing()
+        except (HelperUnavailable, HelperFailed) as exc:
+            err = str(exc)[:200]
+            if err != self._presets_error:
+                log.warning("model presets not readable", extra={"error": err})
+            self._presets_error = err
+            return None
+
+    def _label_of(self, listing: dict[str, Any] | None, name: str | None) -> str | None:
+        row = _preset(listing, name)
+        if row is None:
+            return name
+        out = model_out(row, None)
+        return model_text(out["model"], out["quant"])
+
+    async def active_model(self) -> ActiveModel:
+        """For the run manager: the loaded model's label, whether it reads images, and the
+        selected preset's thinking mode. While nothing is loaded the selected preset
+        answers for images, so a queued picture is not lost on a text-only model."""
+        listing = await self._listing()
+        row = _preset(listing, listing.get("active") if listing else None)
+        thinking = model_out(row, None)["thinking"] if row else None
+        selected_vision = (row.get("vision") is True) if row else None
+        try:
+            props = await self._llama.props()
+        except LlamaUnavailable:
+            return ActiveModel(None, selected_vision, thinking)
+        name, quant = loaded_label(props, listing)
+        vision = props.vision if props.vision is not None else selected_vision
+        return ActiveModel(model_text(name, quant), vision, thinking)
+
+    async def _set_switch(self, value: dict[str, Any] | None) -> None:
+        self.switch = value
+        try:
+            async with self._sm() as s:
+                if value is None:
+                    await s.execute(delete(SystemState).where(SystemState.key == SWITCH_KEY))
+                else:
+                    stmt = insert(SystemState).values(key=SWITCH_KEY, value=value)
+                    await s.execute(
+                        stmt.on_conflict_do_update(
+                            index_elements=[SystemState.key],
+                            set_={"value": stmt.excluded.value, "updated_at": func.now()},
+                        )
+                    )
+                await s.commit()
+        except Exception as exc:
+            log.warning("switch state not saved", extra={"error": type(exc).__name__})
+
     async def publish(self) -> dict[str, Any]:
         snap = await self.snapshot(fresh=True)
         self._hub.publish("system.updated", snap)
@@ -362,7 +536,7 @@ class SystemService:
 
     async def _gather(self) -> Parts:
         errors: list[tuple[int, str]] = []
-        p = Parts(checked_at=datetime.now(UTC), intent=self.intent)
+        p = Parts(checked_at=datetime.now(UTC), intent=self.intent, switch=self.switch)
         p.hermes_ok, p.hermes_version = self._mgr.hermes_ok, self._mgr.hermes_version
 
         async def llama_part() -> None:
@@ -397,12 +571,13 @@ class SystemService:
                 p.hermes_detail = None
 
         async def helper_part() -> None:
-            llama_unit, hermes_unit, gpus = await asyncio.gather(
+            llama_unit, hermes_unit, gpus, presets = await asyncio.gather(
                 self._helper_call("llama.status", errors, 0),
                 self._helper_call("hermes.status", errors, 1),
                 self._helper_call("gpu.status", errors, 2),
+                self._listing(),
             )
-            p.llama_unit, p.hermes_unit = llama_unit, hermes_unit
+            p.llama_unit, p.hermes_unit, p.presets = llama_unit, hermes_unit, presets
             if isinstance(gpus, dict) and isinstance(gpus.get("gpus"), list):
                 p.gpus = [g for g in gpus["gpus"] if isinstance(g, dict)]
 
@@ -465,8 +640,167 @@ class SystemService:
                 raise
             await self._set_intent(by)
             self.intent = "stopped"
+            if self.switch and self.switch.get("state") == "switching":
+                await self._set_switch(None)  # its watcher was cancelled above
             log.info("llama-server stopped", extra={"by": by, "stopped_run": active})
         return await self.publish()
+
+    # --- switching the model (M) ------------------------------------------------
+
+    async def _move(self, preset: str) -> None:
+        await self._helper.call("llama.stop", timeout_s=CONTROL_TIMEOUT_S)
+        await self._helper.call("llama.select", arg=preset, timeout_s=STATUS_TIMEOUT_S)
+        self._presets = None
+        await self._helper.call("llama.start", timeout_s=CONTROL_TIMEOUT_S)
+
+    async def switch_llama(self, model: str, *, force: bool, by: str) -> dict[str, Any]:
+        """Load another preset. While llama-server is stopped only the selection changes
+        (Start loads it). A running one is stopped, repointed and started with the queue
+        held; an active run is refused unless `force`, which stops it first."""
+        async with self._control:
+            if self.switch and self.switch.get("state") == "switching":
+                raise SystemConflict("switch_in_progress", "a model switch is in progress")
+            listing = await self._fetch_listing()
+            row = _preset(listing, model)
+            if row is None:
+                raise SystemConflict("unknown_model", f"no model preset named {model}")
+            if row.get("usable") is not True:
+                raise SystemConflict(
+                    "model_not_usable", f"preset {model}: {row.get('reason') or 'not usable'}"
+                )
+            unit = await self._helper.call("llama.status", timeout_s=STATUS_TIMEOUT_S)
+            running = unit.get("active_state") in ("active", "activating", "reloading")
+            prev = listing["active"]
+            if not running:
+                if prev != model:
+                    await self._helper.call("llama.select", arg=model, timeout_s=STATUS_TIMEOUT_S)
+                    self._presets = None
+                log.info("model selected for the next start", extra={"model": model, "by": by})
+            else:
+                if prev == model:
+                    raise SystemConflict("already_active", "this model is already loaded")
+                starting, self._starting = self._starting, None
+                if starting is not None:
+                    starting.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await starting
+                was_held = self._mgr.held
+                self._mgr.hold(True)  # first: no queued run may start while we decide
+                active = self._mgr.active_run_id
+                if active is not None and not force:
+                    self._mgr.hold(was_held)
+                    raise SystemConflict(
+                        "run_active", "a run is active; switching the model would end it"
+                    )
+                if active is not None:
+                    with contextlib.suppress(NotFound):
+                        await self._mgr.stop(active)
+                try:
+                    await self._move(model)
+                except (HelperUnavailable, HelperFailed):
+                    # half done: start whatever is selected now and release once it is up
+                    self._presets = None
+                    with contextlib.suppress(HelperUnavailable, HelperFailed):
+                        await self._helper.call("llama.start", timeout_s=CONTROL_TIMEOUT_S)
+                    self.intent = "starting"
+                    self._starting = asyncio.create_task(self._wait_ready(), name="llama-ready")
+                    raise
+                self.intent = "starting"
+                await self._set_switch(
+                    switch_out("switching", src=prev, to=model, by=by,
+                               at=datetime.now(UTC).isoformat())
+                )  # fmt: skip
+                self._starting = asyncio.create_task(
+                    self._wait_switch(prev, model), name="llama-switch"
+                )
+                log.info(
+                    "model switch started",
+                    extra={"from": prev, "to": model, "by": by, "stopped_run": active},
+                )
+        return await self.publish()
+
+    async def dismiss_switch(self) -> dict[str, Any]:
+        """Forget a failed switch (the previous model is back). A llama-server that is
+        down stays reported until it runs again."""
+        async with self._control:
+            if self.switch and self.switch.get("state") == "failed":
+                await self._set_switch(None)
+        return await self.publish()
+
+    async def _await_model(self, restarts_limit: int) -> str:
+        """Until the started llama-server is healthy: "ok", "exited" (it keeps exiting
+        while loading, or was stopped), or "timeout"."""
+        deadline = time.monotonic() + self._start_wait_s
+        polls = 0
+        while time.monotonic() < deadline:
+            with contextlib.suppress(LlamaUnavailable):
+                if await self._llama.health():
+                    return "ok"
+            polls += 1
+            if polls % SWITCH_STATUS_EVERY == 0:
+                with contextlib.suppress(HelperUnavailable, HelperFailed):
+                    unit = await self._helper.call("llama.status", timeout_s=STATUS_TIMEOUT_S)
+                    restarts = unit.get("restarts")
+                    gone = unit.get("active_state") in ("failed", "inactive")
+                    if gone or (isinstance(restarts, int) and restarts >= restarts_limit):
+                        return "exited"
+            await asyncio.sleep(self._ready_poll_s)
+        return "timeout"
+
+    async def _wait_switch(self, prev: str | None, to: str) -> None:
+        started = time.monotonic()
+        down = False
+        try:
+            outcome = await self._await_model(self._switch_restarts)
+            if outcome == "ok":
+                await self._set_switch(None)
+                log.info("model switched", extra={"to": to, "s": round(time.monotonic() - started)})
+            else:
+                elapsed = round(time.monotonic() - started)
+                log.warning(
+                    "the new model did not load; going back",
+                    extra={"to": to, "from": prev, "why": outcome, "s": elapsed},
+                )
+                back = "none"
+                if prev is not None:
+                    try:
+                        await self._move(prev)
+                        back = await self._await_model(self._switch_restarts * 2)
+                    except (HelperUnavailable, HelperFailed) as exc:
+                        back = "helper"
+                        log.warning("going back failed", extra={"error": str(exc)[:200]})
+                down = back != "ok"
+                state = "down" if down else "failed"
+                was = self.switch or {}
+                at = was.get("at") or datetime.now(UTC).isoformat()
+                await self._set_switch(
+                    switch_out(state, src=prev, to=to, by=was.get("by"), at=at, error=outcome,
+                               elapsed_s=elapsed)
+                )  # fmt: skip
+                if self._notify_switch is not None:
+                    listing = await self._listing()
+                    self._notify_switch(
+                        state, to=self._label_of(listing, to) or to,
+                        back=self._label_of(listing, prev), at=at,
+                    )  # fmt: skip
+            if down:
+                # like a stop: the queue stays held until llama-server is healthy again
+                # (Start from the app, or the watch seeing it come up by itself)
+                await self._set_intent("model switch")
+                self.intent = "stopped"
+            else:
+                await self._release()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("model switch watcher failed; releasing the queue")
+            with contextlib.suppress(Exception):
+                await self._release(ready=False)
+        try:
+            await self.publish()
+        except Exception:
+            log.exception("system snapshot after a switch failed")
+        self._starting = None
 
     async def start_llama(self, *, by: str) -> dict[str, Any]:
         async with self._control:
@@ -489,19 +823,22 @@ class SystemService:
             await asyncio.sleep(self._ready_poll_s)
         if not ready:
             log.warning("llama-server not ready in time; releasing the queue anyway")
-        await self._release()
+        await self._release(ready=ready)
         self._starting = None
         try:
             await self.publish()
         except Exception:
             log.exception("system snapshot after start failed")
 
-    async def _release(self) -> None:
+    async def _release(self, *, ready: bool = True) -> None:
         async with self._sm() as s:
             await s.execute(delete(SystemState).where(SystemState.key == INTENT_KEY))
             await s.commit()
         self.intent = None
         self._mgr.hold(False)
+        self._presets = None  # whoever started it may have selected another preset
+        if ready and self.switch and self.switch.get("state") == "down":
+            await self._set_switch(None)  # llama-server runs again
 
     async def _set_intent(self, by: str) -> None:
         value = {"state": "stopped", "at": datetime.now(UTC).isoformat(), "by": by}

@@ -123,10 +123,14 @@ class ContextMeter:
         *,
         interval_s: float,
         on_sample: Callable[[Measurement], None] | None = None,
+        max_ctx: int | None = None,
     ) -> None:
         self._llama = llama
         self._interval = interval_s
         self.on_sample = on_sample
+        # the agent's window (M): llama-server's own may be larger, Hermes compresses by
+        # its `context_length`, so that is what a chat fills up
+        self._max_ctx = max_ctx
         self.tracker = ContextTracker()
         self._m0: dict[str, float] | None = None
         self._task: asyncio.Task[None] | None = None
@@ -155,12 +159,17 @@ class ContextMeter:
                 self._n_ctx = s.n_ctx
                 last = self.tracker.last if self.tracker.observe(s) else None
                 if last is not None and self.on_sample is not None:
-                    self.on_sample(Measurement(last.tokens, last.n_ctx, "sample"))
+                    self.on_sample(self._capped(Measurement(last.tokens, last.n_ctx, "sample")))
             except LlamaUnavailable:
                 pass
             except Exception:
                 log.exception("context sample failed")
             await asyncio.sleep(self._interval)
+
+    def _capped(self, m: Measurement) -> Measurement:
+        if self._max_ctx is None or m.max <= self._max_ctx:
+            return m
+        return Measurement(m.tokens, self._max_ctx, m.source)
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -187,6 +196,7 @@ class ContextMeter:
             m = None
         perf = throughput(self._m0, m1)
         if m is not None:
+            m = self._capped(m)
             perf["context_source"] = m.source
         perf["llama_calls_seen"] = len(self.tracker.tasks)
         return m, perf
