@@ -102,6 +102,9 @@ class Conversation(Base):
         BigInteger, nullable=False, server_default=text("0")
     )
     origin: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'app'"))
+    # P1: the personal profile this chat started with (the head of every run's
+    # instructions). NULL: not started yet; '': started without one.
+    persona: Mapped[str | None] = mapped_column(Text)
     # the latest non-empty user/assistant text, for the chat list (N40, migration 0006)
     preview: Mapped[str | None] = mapped_column(Text)
 

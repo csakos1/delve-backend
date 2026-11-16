@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     attachment_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
         default=14, validation_alias=_env("DELVE_ATTACHMENT_RETENTION_DAYS")
     )
+    # P1: the personal profile (profile.md, topics/*.md). The backend writes it, the agent
+    # reads the topic files (2750 delve:agent, delve-infra). No directory: no profile.
+    persona_dir: Path = Field(
+        default=Path("/var/lib/delve-persona"), validation_alias=_env("DELVE_PERSONA_DIR")
+    )
 
     # --- HTTP server ---
     # B3: privileged helper (delve-infra bin/delve-helper, delve-helper.socket)

@@ -37,6 +37,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 13 | Attachments: image and file uploads, images into the run, files through the agent's inbox | done |
 | 14 | Watchers: the agent's watch cards, the judge between runs, hit pushes with the link, cron jobs through the helper; the missed morning brief written late | done |
 | 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`); the posting app's icon | done |
+| 16 | Personal profile: a core in every agent run's instructions and topic files the agent reads on demand, kept per conversation; read and edited by the app; the part marked for the General chats | done |
 
 ## Development
 
@@ -155,6 +156,10 @@ the desktop agent's instead.
 | `GET` | `/api/v1/mirror` | `{desk: {connected, last_seen_s}}`: is the desktop agent fetching |
 | `GET` | `/api/v1/desk/next?wait=` | the desktop agent's token: `{commands: [...]}`, waits up to `wait` seconds (0-30, default 25) for the first one |
 | `GET` | `/api/v1/desk/icon/{icon}` | the desktop agent's token: an app's icon (`image/png`) by the name a `notify.show` carries; 404 `icon_not_found` once it is no longer kept |
+| `GET` | `/api/v1/persona` | `persona`: the personal profile as it is now; see "Personal profile" |
+| `PUT` | `/api/v1/persona/profile` | `{sections: [{title, text, general?}]}` (at most 12, a text of at most 4000 characters) replaces the core → `persona`; 503 `persona_no_store`, `persona_not_writable` |
+| `PUT` | `/api/v1/persona/topics/{name}` | `{title, summary?, text, general?}` creates or replaces a topic file (`name`: lowercase letters, digits, `-`) → `persona`; 409 `too_many_topics` |
+| `DELETE` | `/api/v1/persona/topics/{name}` | → `persona`; 404 `topic_not_found` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -533,6 +538,39 @@ request does not hold up a restart.
 The agent's token is a device with the role `desk`
 (`sudo delve token create --name desk --role desk`); it opens these two routes. The
 app's routes and the WebSocket answer it like an unknown token.
+
+### Personal profile
+
+What the agent knows about the person it works for (P1, API 13), so a chat does not start
+with explaining who is asking. It lives in a directory outside every repository
+(`DELVE_PERSONA_DIR`, `/var/lib/delve-persona`, 2750 `delve:agent` from delve-infra; the
+agent reads it through its group and cannot write it):
+
+| File | Content | Reaches the model |
+|---|---|---|
+| `profile.md` | the core: `## Title` sections of short facts; `## Title [general]` marks a section for the General chats; HTML comments are for the editor | whole, at the start of every agent run's `instructions`, closed by a line that says to use the facts only where the question needs them |
+| `topics/<name>.md` | more detail on one subject; a front matter of `title`, `summary` (one line) and `general: yes\|no` | one line of the index after the core (`- <path>: <title> - <summary>`); the agent reads the file with `read_file` when the question needs it |
+
+Without the directory, or with an empty one, runs go as before.
+
+**A conversation keeps the profile it started with** (`conversations.persona`, the text
+itself; `''` for a chat that started without one, as every chat from before this did).
+Hermes puts a run's `instructions` at the end of the system prompt, before the
+conversation: the same text in every run of a chat stays in llama-server's prompt cache,
+and a different one would make it read the whole chat again. An edit therefore applies to
+the chats started after it. Scheduled runs and late approvals get it like any run. The
+notes about attachments come after it. Measured with a 525-token profile on a 10 267-token
+system prompt: 37 tokens processed for the next message of a chat, 432 for a new chat.
+
+`persona` (the answer of all four routes): `available` (the directory exists),
+`sections: [{title, text, general}]`, `topics: [{name, title, summary, text, general}]`,
+`block` (what a chat started now gets) with `block_chars` and `revision` (12 hex
+characters of its hash, null without a profile), and `general_text`: the sections and
+topic files marked `general`, and nothing else - the app adds it to the system prompt of a
+General chat, which goes to a cloud model. What is not marked never leaves this machine.
+
+The files can also be edited by hand (as `delve`, or with `sudo`); the backend reads them
+when a chat starts. Nothing of the profile is logged.
 
 ## Pre-commit hook
 

@@ -180,11 +180,14 @@ class RunManager:
         llama: LlamaClient | None = None,
         attachments: AttachmentStore | None = None,
         agent_context: int | None = None,
+        persona: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._llama = llama
         self._attachments = attachments
         self._agent_context = agent_context
+        # P1: the personal profile's text for a chat that starts now ("" without one)
+        self._persona = persona
         self._approval_timeout_s = approval_timeout_s  # mirrors Hermes approvals.timeout
         self._expected_version = expected_version
         self.hermes_ok: bool | None = None  # None until the first health poll
@@ -677,12 +680,17 @@ class RunManager:
                 run.thinking = False
             run.model = model.label or run.model
             run.status, run.started_at = "starting", run.started_at or now()
+            persona = await self._persona_of(conv)
             await s.commit()
             conv_id, thinking, key = conv.id, run.thinking, run.idempotency_key
             origin = run.origin
             prepared = RunInput(run.input, run.instructions)
             if self._attachments is not None:  # images and file paths of the message (B6)
                 prepared = await self._attachments.run_input(s, run)
+            if persona:  # first: the same text in every run of the chat stays cached
+                prepared = RunInput(
+                    prepared.input, "\n\n".join(filter(None, [persona, prepared.instructions]))
+                )
         self.active_run_id = qid
         meter = self._new_meter()
         if meter is not None:
@@ -742,6 +750,20 @@ class RunManager:
             self._ctx = ctx
             await self.stop(run_id)
         await self._consume(ctx)
+
+    async def _persona_of(self, conv: Conversation) -> str:
+        """The personal profile of the chat's runs (P1). A chat keeps the text its first
+        run got: Hermes puts instructions before the conversation, so another text would
+        make llama-server read the whole chat again. A profile that cannot be read now
+        is left undecided - the run goes without, the next one asks again."""
+        if conv.persona is not None or self._persona is None:
+            return conv.persona or ""
+        try:
+            conv.persona = await self._persona()
+        except Exception:
+            log.exception("personal profile not readable")
+            return ""
+        return conv.persona
 
     async def _create_with_retry(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -96,6 +96,7 @@ async def make_harness(
     llama: LlamaClient | None = None,
     timing: Timing = FAST,
     attachments: AttachmentStore | None = None,
+    persona: Callable[[], Awaitable[str]] | None = None,
 ) -> AsyncIterator[Harness]:
     fake = FakeHermes()
     hermes = HermesClient(
@@ -103,7 +104,9 @@ async def make_harness(
     )
     hub = EventHub(validate=True)
     sub = hub.subscribe()
-    mgr = RunManager(db, hermes, hub, timing=timing, llama=llama, attachments=attachments)
+    mgr = RunManager(
+        db, hermes, hub, timing=timing, llama=llama, attachments=attachments, persona=persona
+    )
     try:
         yield Harness(fake, hermes, hub, sub, mgr, db)
     finally:

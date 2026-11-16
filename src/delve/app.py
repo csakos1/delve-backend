@@ -17,6 +17,7 @@ from delve import API_REVISION, REVISION, __version__
 from delve.api import attachments as attachments_api
 from delve.api import devices, rest, ws
 from delve.api import mirror as mirror_api
+from delve.api import persona as persona_api
 from delve.api import schedules as schedules_api
 from delve.api import stats as stats_api
 from delve.api import system as system_api
@@ -30,6 +31,7 @@ from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
 from delve.llama import LlamaClient
 from delve.mirror import MirrorService
+from delve.persona import PersonaStore
 from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
@@ -84,6 +86,7 @@ def create_app(
             llama=llama,
             attachments=attachments,
             agent_context=settings.agent_context,
+            persona=app.state.persona.block,
         )
         app.state.engine, app.state.sessionmaker = engine, sessionmaker
         app.state.hermes, app.state.hub, app.state.run_manager = hermes, hub, manager
@@ -194,6 +197,7 @@ def create_app(
     app.state.pairing_limiter = devices.FailureLimiter()
     app.state.presence = Presence()
     app.state.mirror = MirrorService()
+    app.state.persona = PersonaStore(settings.persona_dir)
     app.include_router(rest.router)
     app.include_router(devices.router)
     app.include_router(system_api.router)
@@ -202,6 +206,7 @@ def create_app(
     app.include_router(attachments_api.router)
     app.include_router(watches_api.router)
     app.include_router(mirror_api.router)
+    app.include_router(persona_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

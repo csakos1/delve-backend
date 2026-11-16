@@ -1,5 +1,5 @@
 {
-  "api_revision": 12,
+  "api_revision": 13,
   "rest": [
     {
       "method": "GET",
@@ -130,6 +130,26 @@
     {
       "method": "POST",
       "path": "/api/v1/mirror/phone",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/persona",
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/persona/profile",
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/persona/topics/{name}",
+      "query": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/persona/topics/{name}",
       "query": []
     },
     {
@@ -547,6 +567,27 @@
         "connected": true,
         "last_seen_s": true
       }
+    },
+    "persona": {
+      "available": true,
+      "block": true,
+      "block_chars": true,
+      "general_text": true,
+      "revision": true,
+      "sections": "persona_section[]",
+      "topics": "persona_topic[]"
+    },
+    "persona_section": {
+      "general": true,
+      "text": true,
+      "title": true
+    },
+    "persona_topic": {
+      "general": true,
+      "name": true,
+      "summary": true,
+      "text": true,
+      "title": true
     },
     "stats_gpu": {
       "index": true,

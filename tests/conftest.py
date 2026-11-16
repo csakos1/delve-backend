@@ -37,6 +37,8 @@ BASE_ENV = {
     # never the machine's real state or inbox directories (test_attachments uses tmp_path)
     "DELVE_ATTACHMENTS_DIR": "/nonexistent/delve-attachments",
     "DELVE_INBOX_DIR": "/nonexistent/delve-inbox",
+    # never the machine's real profile (test_persona uses tmp_path)
+    "DELVE_PERSONA_DIR": "/nonexistent/delve-persona",
     # no cron-list polling of the (missing) helper in the app tests; test_watches drives it
     "DELVE_WATCH_RECONCILE_S": "0",
 }

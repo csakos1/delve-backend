@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from delve import API_REVISION, protocol
@@ -31,6 +32,7 @@ from delve.db.models import (
 )
 from delve.llama import Props
 from delve.mirror import mirror_out
+from delve.persona import Persona, Section, Topic, persona_out, section_out, topic_out
 from delve.schedules import schedule_out
 from delve.serialize import (
     approval_out,
@@ -142,6 +144,15 @@ def shapes() -> dict[str, Any]:
         "watch_item": _keys(item_out(witem)),
         # DA2: GET /api/v1/mirror, and beside `accepted` in POST /api/v1/mirror/phone
         "mirror": _keys(mirror_out(connected=True, seen_s=1.0)),
+        # P1: GET /api/v1/persona, and the answer of its PUT and DELETE routes
+        # (revision: null without a profile)
+        "persona": {
+            **_keys(persona_out(Persona(), Path("/p"))),
+            "sections": "persona_section[]",
+            "topics": "persona_topic[]",
+        },
+        "persona_section": _keys(section_out(Section("t", "x"))),
+        "persona_topic": _keys(topic_out(Topic("n", "t", "s", "x"))),
         "stats_gpu": {
             **_keys({"index": 0, "name": "n"}),
             "power": "stats_series",
