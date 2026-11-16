@@ -4,6 +4,8 @@ two tokens' roles, and the routes through the real app."""
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import logging
 import uuid
 from typing import Any
@@ -14,11 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from delve.auth import ROLE_DESK, authenticate, authenticate_app, create_device
-from delve.mirror import DESK_FRESH_S, MirrorService
+from delve.mirror import DESK_FRESH_S, ICON_MAX, ICONS_MAX, PNG_MAGIC, MirrorService
 
 from .test_api import auth
 
 DEVICE = uuid.UUID(int=7)
+
+
+def png(tail: bytes = b"icon") -> bytes:
+    """Something that starts like a PNG (nobody here decodes the picture)."""
+    return PNG_MAGIC + tail
+
+
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
 
 
 def post(key: str = "0|com.example|1|null|10001", **fields: Any) -> dict[str, Any]:
@@ -79,7 +90,28 @@ async def test_hidden_content_goes_without_its_text() -> None:
         "body": "",
         "category": "msg",
         "hidden": True,
+        "icon": "",
     }
+
+
+async def test_an_apps_icon_goes_by_its_hash_and_is_kept_for_the_agent() -> None:
+    m = MirrorService()
+    m.accept(DEVICE, [post(icon=b64(png())), post(key="b", icon=b64(png())), post(key="c")])
+    one, two, three = await m.next(0)
+    name = hashlib.sha256(png()).hexdigest()[:32]
+    assert (one["icon"], two["icon"], three["icon"]) == (name, name, "")
+    assert m.icon(name) == png() and m.icon("0" * 32) is None
+    # a hidden notification still names its app's icon
+    m.accept(DEVICE, [post(hidden=True, icon=b64(png(b"other")))])
+    (hidden,) = await m.next(0)
+    assert hidden["body"] == "" and m.icon(hidden["icon"]) == png(b"other")
+    # the newest ICONS_MAX stay; one that was used again is not the oldest
+    for i in range(ICONS_MAX - 2):
+        m.keep_icon(png(b"%d" % i))
+    assert m.icon(name) is not None
+    m.keep_icon(png())
+    m.keep_icon(png(b"one more"))
+    assert m.icon(name) is not None and m.icon(hidden["icon"]) is None
 
 
 async def test_a_waiting_poll_gets_what_arrives() -> None:
@@ -215,7 +247,7 @@ def test_phone_to_desk_round_trip(client: TestClient, token: str, desk_token: st
         ("notify.show", "Example", "hello", "msg"),
         ("notify.show", "Mail", "Text", "email"),
     ]
-    assert all(set(c) == {"verb", "id", "app", "title", "body", "category", "hidden"}
+    assert all(set(c) == {"verb", "id", "app", "title", "body", "category", "hidden", "icon"}
                for c in commands)  # fmt: skip
     assert client.get("/api/v1/mirror", headers=auth(token)).json()["desk"]["connected"] is True
 
@@ -245,4 +277,30 @@ def test_phone_events_are_validated(client: TestClient, token: str) -> None:
     assert send([{"op": "update", "key": "k"}]) == 422
     assert send([remove()]) == 200
     assert send([post(title=None, text=None, category=None)]) == 200
+    assert send([post(icon="not base64!")]) == 422
+    assert send([post(icon=b64(b"GIF89a" + b"x" * 20))]) == 422  # not a PNG
+    assert send([post(icon=b64(png(b"x" * ICON_MAX)))]) == 422  # too large
+    assert send([post(icon=b64(png(b"x" * (ICON_MAX - len(PNG_MAGIC)))))]) == 200
+    assert send([post(icon=None)]) == 200
     assert client.get("/api/v1/desk/next?wait=31", headers=auth(token)).status_code == 401
+
+
+@pytest.mark.pg
+def test_the_agent_fetches_an_icon_by_its_name(
+    client: TestClient, token: str, desk_token: str
+) -> None:
+    r = client.post(
+        "/api/v1/mirror/phone", headers=auth(token), json={"events": [post(icon=b64(png()))]}
+    )
+    assert r.status_code == 200, r.text
+    (command,) = client.get("/api/v1/desk/next?wait=0", headers=auth(desk_token)).json()["commands"]
+    name = command["icon"]
+    assert len(name) == 32
+    r = client.get(f"/api/v1/desk/icon/{name}", headers=auth(desk_token))
+    assert r.status_code == 200 and r.content == png()
+    assert r.headers["content-type"] == "image/png"
+    # the app's token does not open it; an unknown or malformed name is not an icon
+    assert client.get(f"/api/v1/desk/icon/{name}", headers=auth(token)).status_code == 401
+    r = client.get(f"/api/v1/desk/icon/{'0' * 32}", headers=auth(desk_token))
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "icon_not_found"
+    assert client.get("/api/v1/desk/icon/short", headers=auth(desk_token)).status_code == 422

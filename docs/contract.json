@@ -1,5 +1,5 @@
 {
-  "api_revision": 11,
+  "api_revision": 12,
   "rest": [
     {
       "method": "GET",
@@ -74,6 +74,11 @@
       "query": [
         "limit"
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/desk/icon/{icon}",
+      "query": []
     },
     {
       "method": "GET",

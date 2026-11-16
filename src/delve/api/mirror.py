@@ -2,16 +2,16 @@
 agent's commands out.
 
 `POST /api/v1/mirror/phone` and `GET /api/v1/mirror` take an app's device token like every
-other route. `GET /api/v1/desk/next` takes the desktop agent's token - a device with the
-role `desk` (`delve-backend token create --role desk`), which opens nothing else here, as
-an app's token does not open this route.
+other route. `GET /api/v1/desk/next` and `GET /api/v1/desk/icon/{icon}` take the desktop
+agent's token - a device with the role `desk` (`delve-backend token create --role desk`),
+which opens nothing else here, as an app's token does not open these two.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from delve.api.rest import Device, bearer_identity
@@ -21,10 +21,12 @@ from delve.mirror import (
     BODY_MAX,
     CATEGORY_MAX,
     EVENTS_MAX,
+    ICON_B64_MAX,
     KEY_MAX,
     POLL_MAX_S,
     TITLE_MAX,
     MirrorService,
+    decode_icon,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -61,11 +63,15 @@ class PhoneEvent(BaseModel):
     # Android's category (msg, email, ...): lowercase letters and underscores
     category: Annotated[str | None, Field(max_length=CATEGORY_MAX, pattern=r"^[a-z_]*$")] = None
     hidden: StrictBool = False
+    # the posting app's icon: a small PNG as base64 (API 12)
+    icon: Annotated[str | None, Field(max_length=ICON_B64_MAX)] = None
 
     @model_validator(mode="after")
     def _post_names_its_app(self) -> PhoneEvent:
         if self.op == "post" and not (self.app or "").strip():
             raise ValueError("a post needs the app's name")
+        if self.icon:
+            decode_icon(self.icon)
         return self
 
 
@@ -98,3 +104,20 @@ async def desk_next(
     """Long poll: the queued commands at once, else those arriving within `wait` seconds,
     else an empty list. The agent asks again right away."""
     return {"commands": await _mirror(request).next(wait)}
+
+
+@router.get("/desk/icon/{icon}")
+async def desk_icon(
+    request: Request,
+    _desk: Desk,
+    icon: Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")],
+) -> Response:
+    """An app's icon by the name a `notify.show` gave it. 404 once it is no longer kept
+    (the backend restarted, or many other icons came since): the agent shows the
+    notification without one, and the phone's next post of that app brings it again."""
+    png = _mirror(request).icon(icon)
+    if png is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "icon_not_found", "message": "no such icon"}
+        )
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})

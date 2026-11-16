@@ -14,11 +14,17 @@ daemon. The backend only passes it on:
 
 Commands for the agent (`GET /api/v1/desk/next`):
 
-    {"verb": "notify.show", "id", "app", "title", "body", "category", "hidden"}
+    {"verb": "notify.show", "id", "app", "title", "body", "category", "hidden", "icon"}
     {"verb": "notify.close", "id"}
 
 `hidden`: Android hid the content from the listener (a one-time code); title and body are
 empty and the agent says so in the notification's text.
+
+`icon`: the posting app's icon, when the phone sent one (a small PNG, API 12) - not the
+picture itself but 32 hex characters of its hash, or "". The agent fetches the picture
+once (`GET /api/v1/desk/icon/{icon}`) and keeps it; here the newest `ICONS_MAX` pictures
+stay in memory. An icon is the app's, the same for every notification of it: it says
+which apps post, nothing of what they posted.
 
 Delivery is at most once: a command is gone when it was handed to a poll. An agent that
 was away for longer than the TTL starts with an empty desktop, which is what a mirror of
@@ -28,12 +34,14 @@ was away for longer than the TTL starts with an empty desktop, which is what a m
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import logging
 import secrets
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -52,6 +60,22 @@ APP_MAX = 64
 TITLE_MAX = 256
 BODY_MAX = 2000
 CATEGORY_MAX = 32
+# an app's icon: a PNG of at most ICON_MAX bytes, sent as base64
+ICON_MAX = 32 * 1024
+ICON_B64_MAX = 4 * ((ICON_MAX + 2) // 3)
+ICONS_MAX = 64
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def decode_icon(encoded: str) -> bytes:
+    """The PNG behind an event's `icon`; ValueError when it is not one."""
+    try:
+        png = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("icon is not base64") from exc
+    if not png.startswith(PNG_MAGIC) or len(png) > ICON_MAX:
+        raise ValueError(f"icon must be a PNG of at most {ICON_MAX} bytes")
+    return png
 
 
 @dataclass(slots=True)
@@ -72,12 +96,26 @@ class MirrorService:
         self.stopping: Callable[[], bool] = lambda: False
         # ids must not be guessable from a key and need not survive a restart
         self._salt = secrets.token_bytes(16)
+        # the apps' icons the agent may still ask for: hash -> PNG, the newest last
+        self._icons: OrderedDict[str, bytes] = OrderedDict()
 
     # --- the phone's side -----------------------------------------------------------
 
     def notification_id(self, device_id: uuid.UUID, key: str) -> str:
         digest = hashlib.sha256(self._salt + device_id.bytes + key.encode("utf-8"))
         return digest.hexdigest()[:16]
+
+    def keep_icon(self, png: bytes) -> str:
+        """Keeps an app's icon for the agent; returns the name it goes by."""
+        name = hashlib.sha256(png).hexdigest()[:32]
+        self._icons[name] = png
+        self._icons.move_to_end(name)
+        while len(self._icons) > ICONS_MAX:
+            self._icons.popitem(last=False)
+        return name
+
+    def icon(self, name: str) -> bytes | None:
+        return self._icons.get(name)
 
     def accept(self, device_id: uuid.UUID, events: list[dict[str, Any]]) -> int:
         """Queue the phone's events for the agent; returns how many were queued."""
@@ -93,6 +131,7 @@ class MirrorService:
                 continue
             self._drop(nid)  # the newer post of a key wins
             hidden = bool(event.get("hidden"))
+            encoded = event.get("icon")
             self._push(
                 now,
                 {
@@ -103,6 +142,7 @@ class MirrorService:
                     "body": "" if hidden else event.get("text") or "",
                     "category": event.get("category") or "",
                     "hidden": hidden,
+                    "icon": self.keep_icon(decode_icon(encoded)) if encoded else "",
                 },
             )
         if self._queue:

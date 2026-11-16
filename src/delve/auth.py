@@ -8,8 +8,8 @@ A new code replaces any unused one, and only the code's SHA-256 is stored.
 
 Roles (DA2): a device is an app (`app`, every paired phone) or the desktop agent (`desk`,
 created with `delve-backend token create --role desk`). The app's routes and the
-WebSocket take only `app` tokens; the agent's token opens `GET /api/v1/desk/next` and
-nothing else, so a token read from the operator's home directory shows no conversation.
+WebSocket take only `app` tokens; the agent's token opens the two routes under `/api/v1/desk/`
+and nothing else, so a token read from the operator's home directory shows no conversation.
 """
 
 from __future__ import annotations

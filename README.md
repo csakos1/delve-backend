@@ -36,7 +36,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 12 | Observability: run, approval and token series, GPU sampling, retention cleanup | done |
 | 13 | Attachments: image and file uploads, images into the run, files through the agent's inbox | done |
 | 14 | Watchers: the agent's watch cards, the judge between runs, hit pushes with the link, cron jobs through the helper; the missed morning brief written late | done |
-| 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`) | done |
+| 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`); the posting app's icon | done |
 
 ## Development
 
@@ -92,8 +92,8 @@ FCM token). Only SHA-256 hashes of codes and tokens are stored. These commands n
 
 `delve-backend token create --name desk --role desk` creates the desktop agent's token
 (delve-infra `bin/delve-desk`, see "Notification mirroring"). A device's role says what
-its token opens: `app` (every paired phone) the whole API below, `desk` only
-`GET /api/v1/desk/next`. `token list` shows the role.
+its token opens: `app` (every paired phone) the whole API below, `desk` only the two
+routes under `/api/v1/desk/`. `token list` shows the role.
 
 The installed service listens on `127.0.0.1:8700`; a development backend next to it
 needs another port, e.g. `DELVE_BIND=127.0.0.1:8701` in its environment.
@@ -116,7 +116,7 @@ downgrading the schema).
 ## API
 
 Every endpoint except `/api/v1/health`, `/api/v1/meta` and `/api/v1/devices/register`
-needs `Authorization: Bearer <device token>` - an app's token; `/api/v1/desk/next` takes
+needs `Authorization: Bearer <device token>` - an app's token; the routes under `/api/v1/desk/` take
 the desktop agent's instead.
 
 | Method | Path | |
@@ -151,9 +151,10 @@ the desktop agent's instead.
 | `GET` | `/api/v1/watches/{slug}` | `watch`; 404 `watch_not_found` |
 | `GET` | `/api/v1/watches/{slug}/items?verdict=&before=&limit=` | `{data: [watch_item], next_before}`, newest first; `verdict`: comma list of `pending`, `match`, `reject`, `mechanical`, `error`, or `hits` (= `match,mechanical`); 422 `invalid_verdict` |
 | `POST` | `/api/v1/watches/{slug}/pause\|resume\|run` | the watcher's cron job through the helper → `watch`; 409 `watch_job_missing`, 503 `helper_unavailable`, 502 `helper_failed` |
-| `POST` | `/api/v1/mirror/phone` | `{events: [{op: post\|remove, key, app?, title?, text?, category?, hidden?}]}` (1-32 events, in order) → `{accepted, desk: {connected, last_seen_s}}`; see "Notification mirroring" |
+| `POST` | `/api/v1/mirror/phone` | `{events: [{op: post\|remove, key, app?, title?, text?, category?, hidden?, icon?}]}` (1-32 events, in order) → `{accepted, desk: {connected, last_seen_s}}`; see "Notification mirroring" |
 | `GET` | `/api/v1/mirror` | `{desk: {connected, last_seen_s}}`: is the desktop agent fetching |
 | `GET` | `/api/v1/desk/next?wait=` | the desktop agent's token: `{commands: [...]}`, waits up to `wait` seconds (0-30, default 25) for the first one |
+| `GET` | `/api/v1/desk/icon/{icon}` | the desktop agent's token: an app's icon (`image/png`) by the name a `notify.show` carries; 404 `icon_not_found` once it is no longer kept |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -499,19 +500,24 @@ and sends what it saw, for the apps the user chose there, to `POST /api/v1/mirro
 `post` for a new or changed notification (`key`: the listener's key; `app`: the app's
 name as shown; `title`, `text` ≤ 256 / 2000 characters; `category`: Android's, such as
 `msg` or `email`; `hidden: true` when Android kept the content from the listener, as it
-does with one-time codes) and `remove` when it went away on the phone. What is not chosen
-on the phone never leaves it.
+does with one-time codes; `icon`: the posting app's icon, a PNG of at most 32 KiB as
+base64, API 12) and `remove` when it went away on the phone. What is not chosen on the
+phone never leaves it.
 
 The desktop agent (delve-infra `bin/delve-desk`, a user service in the operator's
 graphical session) asks `GET /api/v1/desk/next` in a loop and gets commands:
 
 | Command | Fields | |
 |---|---|---|
-| `notify.show` | `id, app, title, body, category, hidden` | show, or replace the one shown under the same `id` |
+| `notify.show` | `id, app, title, body, category, hidden, icon` | show, or replace the one shown under the same `id` |
 | `notify.close` | `id` | close it; an unknown `id` is nothing to do |
 
 `id` is 16 hex characters derived from the device and the key with a secret of this
 process, so the agent never sees a key and an `id` means nothing after a restart.
+`icon` is "" or 32 hex characters of the hash of the app's icon; the agent fetches the
+picture once with `GET /api/v1/desk/icon/{icon}` and keeps its own copy. The backend
+holds the newest 64 icons in memory (an icon is the app's, the same for each of its
+notifications); after a restart the phone's next post of an app brings its icon again.
 
 The backend only passes things on. Nothing of a notification is stored or logged:
 commands wait in memory, at most 200 of them and each for at most 60 seconds, and a
@@ -525,7 +531,7 @@ A waiting poll ends within a second when the server is told to stop, so the agen
 request does not hold up a restart.
 
 The agent's token is a device with the role `desk`
-(`sudo delve token create --name desk --role desk`); it opens this one route. The
+(`sudo delve token create --name desk --role desk`); it opens these two routes. The
 app's routes and the WebSocket answer it like an unknown token.
 
 ## Pre-commit hook

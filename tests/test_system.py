@@ -862,7 +862,7 @@ async def test_failed_switch_with_no_way_back(sysenv: Sys) -> None:
     helper.start_to = "ok"
     await svc.start_llama(by="pixel")
     async with asyncio.timeout(5):
-        while h.mgr.held:  # noqa: ASYNC110
+        while h.mgr.held or svc._starting:  # noqa: ASYNC110
             await asyncio.sleep(0.01)
     assert svc.switch is None and await _switch_row(h.db) is None and svc.intent is None
 
