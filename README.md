@@ -36,6 +36,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 12 | Observability: run, approval and token series, GPU sampling, retention cleanup | done |
 | 13 | Attachments: image and file uploads, images into the run, files through the agent's inbox | done |
 | 14 | Watchers: the agent's watch cards, the judge between runs, hit pushes with the link, cron jobs through the helper; the missed morning brief written late | done |
+| 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`) | done |
 
 ## Development
 
@@ -89,6 +90,11 @@ list` and `delve-backend token revoke <device-id>` manage devices (revoking also
 FCM token). Only SHA-256 hashes of codes and tokens are stored. These commands need only
 `DELVE_DATABASE_URL`.
 
+`delve-backend token create --name desk --role desk` creates the desktop agent's token
+(delve-infra `bin/delve-desk`, see "Notification mirroring"). A device's role says what
+its token opens: `app` (every paired phone) the whole API below, `desk` only
+`GET /api/v1/desk/next`. `token list` shows the role.
+
 The installed service listens on `127.0.0.1:8700`; a development backend next to it
 needs another port, e.g. `DELVE_BIND=127.0.0.1:8701` in its environment.
 
@@ -110,7 +116,8 @@ downgrading the schema).
 ## API
 
 Every endpoint except `/api/v1/health`, `/api/v1/meta` and `/api/v1/devices/register`
-needs `Authorization: Bearer <device token>`.
+needs `Authorization: Bearer <device token>` - an app's token; `/api/v1/desk/next` takes
+the desktop agent's instead.
 
 | Method | Path | |
 |---|---|---|
@@ -144,6 +151,9 @@ needs `Authorization: Bearer <device token>`.
 | `GET` | `/api/v1/watches/{slug}` | `watch`; 404 `watch_not_found` |
 | `GET` | `/api/v1/watches/{slug}/items?verdict=&before=&limit=` | `{data: [watch_item], next_before}`, newest first; `verdict`: comma list of `pending`, `match`, `reject`, `mechanical`, `error`, or `hits` (= `match,mechanical`); 422 `invalid_verdict` |
 | `POST` | `/api/v1/watches/{slug}/pause\|resume\|run` | the watcher's cron job through the helper → `watch`; 409 `watch_job_missing`, 503 `helper_unavailable`, 502 `helper_failed` |
+| `POST` | `/api/v1/mirror/phone` | `{events: [{op: post\|remove, key, app?, title?, text?, category?, hidden?}]}` (1-32 events, in order) → `{accepted, desk: {connected, last_seen_s}}`; see "Notification mirroring" |
+| `GET` | `/api/v1/mirror` | `{desk: {connected, last_seen_s}}`: is the desktop agent fetching |
+| `GET` | `/api/v1/desk/next?wait=` | the desktop agent's token: `{commands: [...]}`, waits up to `wait` seconds (0-30, default 25) for the first one |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -481,6 +491,42 @@ still look connected here for up to a minute (its close never arrived), so the l
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An
 `UNREGISTERED` answer clears the device's FCM token; 429/5xx are retried 3 times. Every
 send is logged in `push_log`.
+
+### Notification mirroring
+
+The phone's notifications on the desktop (DA2). The app runs a notification listener
+and sends what it saw, for the apps the user chose there, to `POST /api/v1/mirror/phone`:
+`post` for a new or changed notification (`key`: the listener's key; `app`: the app's
+name as shown; `title`, `text` ≤ 256 / 2000 characters; `category`: Android's, such as
+`msg` or `email`; `hidden: true` when Android kept the content from the listener, as it
+does with one-time codes) and `remove` when it went away on the phone. What is not chosen
+on the phone never leaves it.
+
+The desktop agent (delve-infra `bin/delve-desk`, a user service in the operator's
+graphical session) asks `GET /api/v1/desk/next` in a loop and gets commands:
+
+| Command | Fields | |
+|---|---|---|
+| `notify.show` | `id, app, title, body, category, hidden` | show, or replace the one shown under the same `id` |
+| `notify.close` | `id` | close it; an unknown `id` is nothing to do |
+
+`id` is 16 hex characters derived from the device and the key with a secret of this
+process, so the agent never sees a key and an `id` means nothing after a restart.
+
+The backend only passes things on. Nothing of a notification is stored or logged:
+commands wait in memory, at most 200 of them and each for at most 60 seconds, and a
+command is gone once a poll took it (at most once). An agent that was away longer starts
+with what arrives from then on. A newer `post` of a key replaces the one still waiting; a
+`remove` drops the waiting `post` and still sends the close, because an earlier post of
+the key may be on the desktop. When the agent asks again while its previous request is
+still waiting here, the older request ends with an empty list: commands go to the newest
+poll only. `desk.connected` is true while the agent asked within the last 65 seconds.
+A waiting poll ends within a second when the server is told to stop, so the agent's open
+request does not hold up a restart.
+
+The agent's token is a device with the role `desk`
+(`sudo delve token create --name desk --role desk`); it opens this one route. The
+app's routes and the WebSocket answer it like an unknown token.
 
 ## Pre-commit hook
 

@@ -5,6 +5,11 @@ A token is shown once when it is created; only its SHA-256 is stored in `devices
 Pairing (plan 12/8, decision 161): `delve-backend pair` prints an 8-digit one-time code
 (10 minutes); the app sends it to `POST /api/v1/devices/register` and receives a token.
 A new code replaces any unused one, and only the code's SHA-256 is stored.
+
+Roles (DA2): a device is an app (`app`, every paired phone) or the desktop agent (`desk`,
+created with `delve-backend token create --role desk`). The app's routes and the
+WebSocket take only `app` tokens; the agent's token opens `GET /api/v1/desk/next` and
+nothing else, so a token read from the operator's home directory shows no conversation.
 """
 
 from __future__ import annotations
@@ -27,6 +32,9 @@ FCM_TOKEN_MAX = 4096
 TOKEN_PREFIX = "dlv_"  # noqa: S105  # a prefix, not a secret
 # last_seen_at is a hint, not an audit log: write it at most this often per device
 LAST_SEEN_RESOLUTION = timedelta(minutes=1)
+ROLE_APP = "app"
+ROLE_DESK = "desk"
+ROLES = (ROLE_APP, ROLE_DESK)
 
 
 def new_token() -> str:
@@ -41,22 +49,28 @@ def token_hash(token: str) -> str:
 class DeviceIdentity:
     id: uuid.UUID
     name: str
+    role: str = ROLE_APP
 
 
-async def create_device(session: AsyncSession, name: str) -> tuple[Device, str]:
+async def create_device(
+    session: AsyncSession, name: str, *, role: str = ROLE_APP
+) -> tuple[Device, str]:
     """Insert a device and return it with its plaintext token (never stored)."""
     name = name.strip()
     if not name or len(name) > 64:
         raise ValueError("device name must be 1-64 characters")
+    if role not in ROLES:
+        raise ValueError(f"role must be one of {', '.join(ROLES)}")
     token = new_token()
-    device = Device(id=uuid.uuid4(), name=name, token_sha256=token_hash(token))
+    device = Device(id=uuid.uuid4(), name=name, token_sha256=token_hash(token), role=role)
     session.add(device)
     await session.flush()
     return device, token
 
 
 async def authenticate(session: AsyncSession, token: str | None) -> DeviceIdentity | None:
-    """Return the device for a valid, non-revoked token; None otherwise."""
+    """Return the device for a valid, non-revoked token; None otherwise. The caller
+    checks the role: `authenticate_app` for everything the app uses."""
     if not token or not token.startswith(TOKEN_PREFIX) or len(token) > 128:
         return None
     digest = token_hash(token)
@@ -70,7 +84,13 @@ async def authenticate(session: AsyncSession, token: str | None) -> DeviceIdenti
     if device.last_seen_at is None or now - device.last_seen_at > LAST_SEEN_RESOLUTION:
         await session.execute(update(Device).where(Device.id == device.id).values(last_seen_at=now))
         await session.commit()
-    return DeviceIdentity(id=device.id, name=device.name)
+    return DeviceIdentity(id=device.id, name=device.name, role=device.role)
+
+
+async def authenticate_app(session: AsyncSession, token: str | None) -> DeviceIdentity | None:
+    """An app's token; the desktop agent's is no more valid here than an unknown one."""
+    identity = await authenticate(session, token)
+    return identity if identity is not None and identity.role == ROLE_APP else None
 
 
 async def revoke_device(session: AsyncSession, device_id: uuid.UUID) -> bool:

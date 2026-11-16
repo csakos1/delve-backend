@@ -351,6 +351,8 @@ class Device(Base):
     created_at: Mapped[datetime] = _now()
     last_seen_at: Mapped[datetime | None] = mapped_column(TZ)
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # 'app' (a phone) or 'desk' (the desktop agent, DA2): what the token opens (delve.auth)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'app'"))
     # which pushes this device wants (decision 260); keys: delve.push.NOTIFY_DEFAULTS
     notify: Mapped[dict[str, Any]] = mapped_column(
         JSONB,

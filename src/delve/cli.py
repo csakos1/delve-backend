@@ -23,7 +23,14 @@ from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, InterfaceError, OperationalError, ProgrammingError
 
-from delve.auth import create_device, create_pairing_code, format_code, revoke_device
+from delve.auth import (
+    ROLE_APP,
+    ROLES,
+    create_device,
+    create_pairing_code,
+    format_code,
+    revoke_device,
+)
 from delve.db.models import Device
 from delve.db.session import make_engine, make_sessionmaker
 
@@ -48,16 +55,17 @@ def _db_url() -> str:
     return os.environ.get("DELVE_DATABASE_URL", DEFAULT_DB_URL)
 
 
-async def _token_create(name: str) -> int:
+async def _token_create(name: str, role: str = ROLE_APP) -> int:
     engine = make_engine(_db_url())
     try:
         async with make_sessionmaker(engine)() as session:
-            device, token = await create_device(session, name)
+            device, token = await create_device(session, name, role=role)
             await session.commit()
     finally:
         await engine.dispose()
-    print(f"device: {device.id}  name: {device.name}", file=sys.stderr)
-    print("token (shown once, store it in the app):", file=sys.stderr)
+    print(f"device: {device.id}  name: {device.name}  role: {device.role}", file=sys.stderr)
+    where = "the app" if role == ROLE_APP else "the agent's environment file"
+    print(f"token (shown once, store it in {where}):", file=sys.stderr)
     print(token)
     return 0
 
@@ -90,7 +98,7 @@ async def _token_list() -> int:
     for d in rows:
         seen = d.last_seen_at.isoformat(timespec="seconds") if d.last_seen_at else "-"
         state = "revoked" if d.revoked else "active"
-        print(f"{d.id}  {state:7}  last_seen={seen}  {d.name}")
+        print(f"{d.id}  {state:7}  {d.role:4}  last_seen={seen}  {d.name}")
     return 0
 
 
@@ -120,15 +128,22 @@ def _serve() -> int:
 
     settings = get_settings()
     configure_logging(settings.log_level)
-    uvicorn.run(
-        create_app(settings),
-        host=settings.bind_host,
-        port=settings.bind_port,
-        log_config=None,
-        proxy_headers=False,
-        server_header=False,
-        ws_ping_interval=None,  # the app sends its own keepalives (plan 6.7)
+    app = create_app(settings)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=settings.bind_host,
+            port=settings.bind_port,
+            log_config=None,
+            proxy_headers=False,
+            server_header=False,
+            ws_ping_interval=None,  # the app sends its own keepalives (plan 6.7)
+        )
     )
+    # uvicorn waits for open requests before it stops; the desktop agent's long poll
+    # would hold a restart for up to 30 s (delve.mirror)
+    app.state.mirror.stopping = lambda: server.should_exit
+    server.run()
     return 0
 
 
@@ -143,6 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
     tsub = token.add_subparsers(dest="action", required=True)
     create = tsub.add_parser("create", help="create a device and print its token once")
     create.add_argument("--name", required=True)
+    create.add_argument(
+        "--role",
+        choices=ROLES,
+        default=ROLE_APP,
+        help="app: a phone (default); desk: the desktop agent (delve-desk)",
+    )
     tsub.add_parser("list", help="list devices")
     revoke = tsub.add_parser("revoke", help="revoke a device")
     revoke.add_argument("device_id")
@@ -160,7 +181,7 @@ def _db_commands(args: argparse.Namespace) -> int:
             print(exc, file=sys.stderr)
             return 2
     if args.action == "create":
-        return asyncio.run(_token_create(args.name))
+        return asyncio.run(_token_create(args.name, args.role))
     if args.action == "list":
         return asyncio.run(_token_list())
     return asyncio.run(_token_revoke(args.device_id))

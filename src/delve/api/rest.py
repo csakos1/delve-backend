@@ -17,7 +17,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
-from delve.auth import DeviceIdentity, authenticate
+from delve.auth import ROLE_APP, DeviceIdentity, authenticate
 from delve.db.models import TERMINAL_RUN_STATUSES, Card, Conversation, Message, Run
 from delve.runs.approvals import DEFAULT_LIST_STATUSES, ApprovalError, ApprovalService
 from delve.runs.manager import NotFound, RunManager
@@ -34,14 +34,19 @@ def _manager(request: Request) -> RunManager:
     return mgr
 
 
-async def require_device(request: Request) -> DeviceIdentity:
+async def bearer_identity(request: Request) -> DeviceIdentity | None:
+    """The device of the request's bearer token, whatever its role."""
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
-    device = None
-    if scheme.lower() == "bearer" and token:
-        async with _sessionmaker(request)() as s:
-            device = await authenticate(s, token.strip())
-    if device is None:
+    if scheme.lower() != "bearer" or not token:
+        return None
+    async with _sessionmaker(request)() as s:
+        return await authenticate(s, token.strip())
+
+
+async def require_device(request: Request) -> DeviceIdentity:
+    device = await bearer_identity(request)
+    if device is None or device.role != ROLE_APP:
         raise HTTPException(
             status_code=401,
             detail={"code": "unauthorized", "message": "missing or invalid device token"},

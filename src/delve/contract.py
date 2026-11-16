@@ -30,6 +30,7 @@ from delve.db.models import (
     WatchItem,
 )
 from delve.llama import Props
+from delve.mirror import mirror_out
 from delve.schedules import schedule_out
 from delve.serialize import (
     approval_out,
@@ -139,6 +140,8 @@ def shapes() -> dict[str, Any]:
         # W2: GET /api/v1/watches/{slug}/items, watch.item
         # (verdict: pending|match|reject|mechanical|error)
         "watch_item": _keys(item_out(witem)),
+        # DA2: GET /api/v1/mirror, and beside `accepted` in POST /api/v1/mirror/phone
+        "mirror": _keys(mirror_out(connected=True, seen_s=1.0)),
         "stats_gpu": {
             **_keys({"index": 0, "name": "n"}),
             "power": "stats_series",

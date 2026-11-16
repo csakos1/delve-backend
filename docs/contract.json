@@ -1,5 +1,5 @@
 {
-  "api_revision": 10,
+  "api_revision": 11,
   "rest": [
     {
       "method": "GET",
@@ -76,6 +76,13 @@
       ]
     },
     {
+      "method": "GET",
+      "path": "/api/v1/desk/next",
+      "query": [
+        "wait"
+      ]
+    },
+    {
       "method": "DELETE",
       "path": "/api/v1/devices/me",
       "query": []
@@ -108,6 +115,16 @@
     {
       "method": "GET",
       "path": "/api/v1/meta",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/mirror",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mirror/phone",
       "query": []
     },
     {
@@ -519,6 +536,12 @@
       "title": true,
       "url": true,
       "verdict": true
+    },
+    "mirror": {
+      "desk": {
+        "connected": true,
+        "last_seen_s": true
+      }
     },
     "stats_gpu": {
       "index": true,

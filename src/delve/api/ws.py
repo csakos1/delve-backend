@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.api.history import messages_with_steps
 from delve.attachments import MAX_PER_MESSAGE, AttachmentError
-from delve.auth import DeviceIdentity, authenticate
+from delve.auth import DeviceIdentity, authenticate_app
 from delve.db.models import Conversation, Message
 from delve.events import EventHub, Subscription
 from delve.push import Presence
@@ -70,7 +70,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         return
     token = data.get("device_token")
     async with sm() as s:
-        device = await authenticate(s, token if isinstance(token, str) else None)
+        device = await authenticate_app(s, token if isinstance(token, str) else None)
     if device is None:
         await ws.close(4401, "unauthorized")
         return

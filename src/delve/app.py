@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from delve import API_REVISION, REVISION, __version__
 from delve.api import attachments as attachments_api
 from delve.api import devices, rest, ws
+from delve.api import mirror as mirror_api
 from delve.api import schedules as schedules_api
 from delve.api import stats as stats_api
 from delve.api import system as system_api
@@ -28,6 +29,7 @@ from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
 from delve.llama import LlamaClient
+from delve.mirror import MirrorService
 from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
 from delve.runs.manager import RunManager, Timing
@@ -166,6 +168,7 @@ def create_app(
         try:
             yield
         finally:
+            app.state.mirror.close()  # first: a waiting poll of the agent ends here
             await watches.close()
             await attachments.close()
             await stats.close()
@@ -190,6 +193,7 @@ def create_app(
     app.state.settings = settings
     app.state.pairing_limiter = devices.FailureLimiter()
     app.state.presence = Presence()
+    app.state.mirror = MirrorService()
     app.include_router(rest.router)
     app.include_router(devices.router)
     app.include_router(system_api.router)
@@ -197,6 +201,7 @@ def create_app(
     app.include_router(stats_api.router)
     app.include_router(attachments_api.router)
     app.include_router(watches_api.router)
+    app.include_router(mirror_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")
