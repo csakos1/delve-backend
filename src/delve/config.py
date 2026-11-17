@@ -144,6 +144,21 @@ class Settings(BaseSettings):
     watch_reject_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
         default=30, validation_alias=_env("DELVE_WATCH_REJECT_RETENTION_DAYS")
     )
+    # N1: News. The backend writes the feed list for the agent's collector into news_dir
+    # (2750 delve:agent, delve-infra); the collector's batch files come back through the
+    # card directory's read-only mount. Items older than the retention go (saved ones stay).
+    news_dir: Path = Field(
+        default=Path("/var/lib/delve-news"), validation_alias=_env("DELVE_NEWS_DIR")
+    )
+    news_batch_dir: Path = Field(
+        default=Path("/run/delve/cards/news"), validation_alias=_env("DELVE_NEWS_BATCH_DIR")
+    )
+    news_poll_s: Annotated[float, Field(ge=0, le=3600)] = Field(
+        default=30.0, validation_alias=_env("DELVE_NEWS_POLL_S")
+    )
+    news_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=30, validation_alias=_env("DELVE_NEWS_RETENTION_DAYS")
+    )
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")

@@ -24,6 +24,9 @@ from delve.db.models import (
     Card,
     Conversation,
     Message,
+    NewsItem,
+    NewsSource,
+    NewsTopic,
     Run,
     Schedule,
     ToolStep,
@@ -32,6 +35,11 @@ from delve.db.models import (
 )
 from delve.llama import Props
 from delve.mirror import mirror_out
+from delve.news import item_out as news_item_out
+from delve.news import other_out as news_other_out
+from delve.news import settings_out as news_settings_out
+from delve.news import source_out as news_source_out
+from delve.news import topic_out as news_topic_out
 from delve.persona import Persona, Section, Topic, persona_out, section_out, topic_out
 from delve.schedules import schedule_out
 from delve.serialize import (
@@ -99,6 +107,12 @@ def shapes() -> dict[str, Any]:
     witem = WatchItem(id=1, slug="s", item_id="i", card_id="k", title="t",
                       url="https://x.example/a", reserved=False, verdict="match", notify=True,
                       seen_at=_T)  # fmt: skip
+    nitem = NewsItem(id=1, key="k", kind="feed", title="t", url="https://x.example/a",
+                     seen_at=_T, gn=False, norm_title="t")  # fmt: skip
+    ntopic = NewsTopic(id="t", name="n", description="", position=0, enabled=True)
+    nsource = NewsSource(id="s", topic_id="t", url="https://x.example/rss", kind="feed",
+                         window_h=48, every_min=60, enabled=True, origin="import",
+                         errors_in_row=0)  # fmt: skip
     watch_keys = _keys(watch_out(watch))
     for k in ("include", "any", "exclude"):
         watch_keys[k] = "string[]"
@@ -153,6 +167,33 @@ def shapes() -> dict[str, Any]:
         },
         "persona_section": _keys(section_out(Section("t", "x"))),
         "persona_topic": _keys(topic_out(Topic("n", "t", "s", "x"))),
+        # N1: GET /api/v1/news/items (and each `top` of GET /api/v1/news); kind: feed|release;
+        # sources: how many feeds carried the story; releases: null, or [{tag, url,
+        # published_at}] for a release row; score .. summary_hu: null until N1b;
+        # feedback: more|less|null
+        "news_item": {**_keys(news_item_out(nitem)), "releases": "news_release[]|null"},
+        "news_release": _keys({"tag": "t", "url": "u", "published_at": "p"}),
+        # N1: GET /api/v1/news/items/{id} and its PATCH (text: null until N1b)
+        "news_story": {
+            **_keys(news_item_out(nitem)),
+            "releases": "news_release[]|null",
+            "others": "news_other[]",
+            "text": "string|null",
+        },
+        "news_other": _keys(news_other_out(nitem)),
+        # N1: GET /api/v1/news (state: empty|ok)
+        "news_digest": {
+            "top": "news_item[]",
+            "new": True,
+            "updated_at": True,
+            "state": True,
+            "sources": True,
+            "failing": True,
+        },
+        "news_topic": _keys(news_topic_out(ntopic)),
+        # last_status: ok|not_modified|skipped|error|null; origin: import|app|agent
+        "news_source": _keys(news_source_out(nsource)),
+        "news_settings": _keys(news_settings_out(None)),
         "stats_gpu": {
             **_keys({"index": 0, "name": "n"}),
             "power": "stats_series",

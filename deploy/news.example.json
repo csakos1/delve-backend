@@ -1,0 +1,19 @@
+{
+ "v": 1,
+ "topics": [
+  {"id": "world", "name": "World", "description": "Only major international events that most outlets cover (wars, elections in large countries, disasters). Routine foreign stories score low."},
+  {"id": "orienteering", "name": "Orienteering", "description": "Orienteering races of any kind: the World Championships, World Cup rounds, national championships, new maps and courses. Every race story is interesting."},
+  {"id": "machines", "name": "Machines", "description": "Small farm machinery, tractors and their repair; prices and good deals."}
+ ],
+ "sources": [
+  {"id": "bbc-world", "topic": "world", "url": "https://feeds.bbci.co.uk/news/world/rss.xml"},
+  {"id": "gn-orienteering", "topic": "orienteering", "url": "https://news.google.com/rss/search?q=orienteering&hl=en-US&gl=US&ceid=US:en", "window_h": 168, "every_min": 180},
+  {"id": "gn-tractors", "topic": "machines", "url": "https://news.google.com/rss/search?q=compact+tractor&hl=en-US&gl=US&ceid=US:en", "window_h": 168, "every_min": 360}
+ ],
+ "settings": {
+  "setup": "The reader's own setup: a small farm, a 1990s compact tractor, an old ThinkPad.",
+  "digest_at": "07:00",
+  "push": true,
+  "push_max": 2
+ }
+}

@@ -33,6 +33,10 @@ EXPECTED_TABLES = {
     "gpu_samples",  # B5
     "watches",  # W2
     "watch_items",
+    "news_topics",  # N1
+    "news_sources",
+    "news_items",
+    "news_batches",
 }
 
 

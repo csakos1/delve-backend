@@ -41,6 +41,10 @@ BASE_ENV = {
     "DELVE_PERSONA_DIR": "/nonexistent/delve-persona",
     # no cron-list polling of the (missing) helper in the app tests; test_watches drives it
     "DELVE_WATCH_RECONCILE_S": "0",
+    # never the machine's real news directories, no polling (test_news drives the service)
+    "DELVE_NEWS_DIR": "/nonexistent/delve-news",
+    "DELVE_NEWS_BATCH_DIR": "/nonexistent/delve-news-batches",
+    "DELVE_NEWS_POLL_S": "0",
 }
 
 
@@ -65,6 +69,7 @@ def pg_url() -> str:
 # --- database fixtures for the run manager / API tests --------------------------------
 
 TABLES = (
+    "news_items, news_sources, news_topics, news_batches, "
     "watch_items, watches, gpu_samples, push_log, devices, system_state, schedules, "
     "card_ingest_offsets, cards, approvals, tool_steps, run_events, runs, attachments, "
     "messages, conversations"

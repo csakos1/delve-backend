@@ -501,3 +501,119 @@ class WatchItem(Base):
         Index("ix_watch_items_slug_id", "slug", text("id DESC")),
         Index("ix_watch_items_pending", "id", postgresql_where=text("verdict = 'pending'")),
     )
+
+
+class NewsTopic(Base):
+    """A News topic (N1): a name and a description the model scores against. Imported
+    (`delve-backend news import`) or edited in the app; the list says what the operator
+    reads, so it lives only in the database (D-58 in delve-infra)."""
+
+    __tablename__ = "news_topics"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+
+
+class NewsSource(Base):
+    """A feed the agent's collector reads (N1), with what its last fetch said."""
+
+    __tablename__ = "news_sources"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    topic_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("news_topics.id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="feed")
+    window_h: Mapped[int] = mapped_column(Integer, nullable=False, server_default="48")
+    every_min: Mapped[int] = mapped_column(Integer, nullable=False, server_default="60")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    origin: Mapped[str] = mapped_column(Text, nullable=False, server_default="import")
+    # the collector's last report on it
+    last_at: Mapped[datetime | None] = mapped_column(TZ)
+    last_ok_at: Mapped[datetime | None] = mapped_column(TZ)
+    last_status: Mapped[str | None] = mapped_column(Text)
+    last_http: Mapped[int | None] = mapped_column(Integer)
+    last_error_code: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_items: Mapped[int | None] = mapped_column(Integer)
+    last_new: Mapped[int | None] = mapped_column(Integer)
+    errors_in_row: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = _now()
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('feed','release')", name="kind"),
+        CheckConstraint("origin IN ('import','app','agent')", name="origin"),
+        CheckConstraint(
+            "last_status IN ('ok','not_modified','skipped','error')", name="last_status"
+        ),
+    )
+
+
+class NewsItem(Base):
+    """One news item (N1): a feed entry the collector found, or one day's releases of a
+    `release` source merged into one row. `dup_of` points to the first item with the same
+    title (another source of the same story); the lists show the first one only. The model's
+    fields (score .. summary_hu) are filled in N1b."""
+
+    __tablename__ = "news_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    source_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("news_sources.id", ondelete="SET NULL")
+    )
+    topic_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("news_topics.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    publisher: Mapped[str | None] = mapped_column(Text)
+    excerpt: Mapped[str | None] = mapped_column(Text)  # the feed's own summary
+    published_at: Mapped[datetime | None] = mapped_column(TZ)
+    seen_at: Mapped[datetime] = mapped_column(TZ, nullable=False)  # the batch's time
+    gn: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    norm_title: Mapped[str] = mapped_column(Text, nullable=False)
+    dup_of: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("news_items.id", ondelete="SET NULL")
+    )
+    # a `release` row: [{tag, url, published_at}], newest first
+    releases: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    score: Mapped[int | None] = mapped_column(Integer)
+    why: Mapped[str | None] = mapped_column(Text)
+    setup: Mapped[bool | None] = mapped_column(Boolean)
+    summary_hu: Mapped[str | None] = mapped_column(Text)
+    scored_at: Mapped[datetime | None] = mapped_column(TZ)
+    read_at: Mapped[datetime | None] = mapped_column(TZ)
+    saved_at: Mapped[datetime | None] = mapped_column(TZ)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    feedback_at: Mapped[datetime | None] = mapped_column(TZ)
+    created_at: Mapped[datetime] = _now()
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('feed','release')", name="kind"),
+        CheckConstraint("feedback IN ('more','less')", name="feedback"),
+        Index("ix_news_items_lead", text("id DESC"), postgresql_where=text("dup_of IS NULL")),
+        Index("ix_news_items_dup_of", "dup_of"),
+        Index("ix_news_items_norm_title", "norm_title"),
+    )
+
+
+class NewsBatch(Base):
+    """A batch file of the collector that was read (or refused), so it is read once."""
+
+    __tablename__ = "news_batches"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    at: Mapped[datetime | None] = mapped_column(TZ)
+    items: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    new: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    ingested_at: Mapped[datetime] = _now()

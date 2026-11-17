@@ -1,5 +1,6 @@
 """Command line: `delve-backend [serve]`, `delve-backend pair`,
-`delve-backend token {create,list,revoke}` and `delve-backend helper <verb>`.
+`delve-backend token {create,list,revoke}`, `delve-backend news {import,export}` and
+`delve-backend helper <verb>`.
 
 The token commands only need the database (DELVE_DATABASE_URL), like Alembic, so they
 work without the Hermes key in the environment. `helper` talks to the privileged helper's
@@ -119,6 +120,44 @@ async def _token_revoke(device_id: str) -> int:
     return 0 if ok else 1
 
 
+async def _news(action: str, replace: bool = False) -> int:
+    from delve.events import EventHub
+    from delve.news import NewsError, NewsService
+
+    if action == "import":
+        try:
+            data = json.loads(sys.stdin.read(4 * 1024 * 1024))
+        except ValueError as exc:
+            print(f"news import: not JSON ({exc})", file=sys.stderr)
+            return 2
+    engine = make_engine(_db_url())
+    news = NewsService(
+        make_sessionmaker(engine),
+        EventHub(),
+        news_dir=Path(os.environ.get("DELVE_NEWS_DIR", "/var/lib/delve-news")),
+        batch_dir=Path("/nonexistent"),
+    )
+    try:
+        if action == "export":
+            print(json.dumps(await news.export_config(), ensure_ascii=False, indent=1))
+            return 0
+        try:
+            counts = await news.import_config(data, replace=replace)
+        except NewsError as exc:
+            print(f"news import: {exc.message}", file=sys.stderr)
+            return 2
+        written = await news.write_sources()
+    finally:
+        await engine.dispose()
+    print(
+        f"news: {counts['topics']} topics, {counts['sources']} sources, "
+        f"{counts['settings']} settings imported; sources.json "
+        + ("written" if written else "NOT written (no news directory)"),
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _serve() -> int:
     import uvicorn
 
@@ -167,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
     tsub.add_parser("list", help="list devices")
     revoke = tsub.add_parser("revoke", help="revoke a device")
     revoke.add_argument("device_id")
+    news = sub.add_parser("news", help="News topics and feeds (personal: kept out of git)")
+    nsub = news.add_subparsers(dest="action", required=True)
+    imp = nsub.add_parser("import", help="topics, sources and settings from JSON on stdin")
+    imp.add_argument(
+        "--replace", action="store_true", help="also remove the topics and sources not in it"
+    )
+    nsub.add_parser("export", help="print them as JSON (the import format)")
     helper = sub.add_parser("helper", help="ask the privileged helper (as the backend would)")
     helper.add_argument("verb", choices=HELPER_VERBS)
     helper.add_argument("arg", nargs="?", help="the job id, for agent.cron.pause|resume|run")
@@ -174,6 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _db_commands(args: argparse.Namespace) -> int:
+    if args.command == "news":
+        return asyncio.run(_news(args.action, getattr(args, "replace", False)))
     if args.command == "pair":
         try:
             return asyncio.run(_pair(args.name, args.ttl))

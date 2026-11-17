@@ -17,6 +17,7 @@ from delve import API_REVISION, REVISION, __version__
 from delve.api import attachments as attachments_api
 from delve.api import devices, rest, ws
 from delve.api import mirror as mirror_api
+from delve.api import news as news_api
 from delve.api import persona as persona_api
 from delve.api import schedules as schedules_api
 from delve.api import stats as stats_api
@@ -31,6 +32,7 @@ from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
 from delve.llama import LlamaClient
 from delve.mirror import MirrorService
+from delve.news import NewsService
 from delve.persona import PersonaStore
 from delve.push import Presence, build_push
 from delve.runs.approvals import ApprovalService
@@ -156,6 +158,15 @@ def create_app(
             push_log_retention_days=settings.push_log_retention_days,
         )
         app.state.stats = stats
+        news = NewsService(
+            sessionmaker,
+            hub,
+            news_dir=settings.news_dir,
+            batch_dir=settings.news_batch_dir,
+            poll_s=settings.news_poll_s,
+            retention_days=settings.news_retention_days,
+        )
+        app.state.news = news
         if run_worker:
             await system.start()  # before the worker: a held queue must not start a run
             await manager.start()
@@ -164,6 +175,7 @@ def create_app(
             await stats.start()
             await attachments.start()
             await watches.start()
+            await news.start()
         log.info(
             "startup",
             extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
@@ -172,6 +184,7 @@ def create_app(
             yield
         finally:
             app.state.mirror.close()  # first: a waiting poll of the agent ends here
+            await news.close()
             await watches.close()
             await attachments.close()
             await stats.close()
@@ -207,6 +220,7 @@ def create_app(
     app.include_router(watches_api.router)
     app.include_router(mirror_api.router)
     app.include_router(persona_api.router)
+    app.include_router(news_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

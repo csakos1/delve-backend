@@ -1,5 +1,5 @@
 {
-  "api_revision": 13,
+  "api_revision": 14,
   "rest": [
     {
       "method": "GET",
@@ -130,6 +130,81 @@
     {
       "method": "POST",
       "path": "/api/v1/mirror/phone",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/items",
+      "query": [
+        "before",
+        "limit",
+        "saved",
+        "topic"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/items/{item_id}",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/news/items/{item_id}",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/settings",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/news/settings",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/sources",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/news/sources",
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/news/sources/{source_id}",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/news/sources/{source_id}",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/topics",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/news/topics",
+      "query": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/news/topics/{topic_id}",
+      "query": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/news/topics/{topic_id}",
       "query": []
     },
     {
@@ -589,6 +664,106 @@
       "text": true,
       "title": true
     },
+    "news_item": {
+      "excerpt": true,
+      "feedback": true,
+      "gn": true,
+      "id": true,
+      "kind": true,
+      "published_at": true,
+      "publisher": true,
+      "read": true,
+      "releases": "news_release[]|null",
+      "saved": true,
+      "score": true,
+      "seen_at": true,
+      "setup": true,
+      "source": true,
+      "sources": true,
+      "summary_hu": true,
+      "title": true,
+      "topic": true,
+      "url": true,
+      "why": true
+    },
+    "news_release": {
+      "published_at": true,
+      "tag": true,
+      "url": true
+    },
+    "news_story": {
+      "excerpt": true,
+      "feedback": true,
+      "gn": true,
+      "id": true,
+      "kind": true,
+      "published_at": true,
+      "publisher": true,
+      "read": true,
+      "releases": "news_release[]|null",
+      "saved": true,
+      "score": true,
+      "seen_at": true,
+      "setup": true,
+      "source": true,
+      "sources": true,
+      "summary_hu": true,
+      "title": true,
+      "topic": true,
+      "url": true,
+      "why": true,
+      "others": "news_other[]",
+      "text": "string|null"
+    },
+    "news_other": {
+      "id": true,
+      "published_at": true,
+      "publisher": true,
+      "title": true,
+      "url": true
+    },
+    "news_digest": {
+      "top": "news_item[]",
+      "new": true,
+      "updated_at": true,
+      "state": true,
+      "sources": true,
+      "failing": true
+    },
+    "news_topic": {
+      "description": true,
+      "enabled": true,
+      "id": true,
+      "items_24h": true,
+      "name": true,
+      "position": true,
+      "sources": true
+    },
+    "news_source": {
+      "enabled": true,
+      "errors_in_row": true,
+      "every_min": true,
+      "id": true,
+      "kind": true,
+      "last_at": true,
+      "last_error": true,
+      "last_error_code": true,
+      "last_http": true,
+      "last_items": true,
+      "last_new": true,
+      "last_ok_at": true,
+      "last_status": true,
+      "origin": true,
+      "topic": true,
+      "url": true,
+      "window_h": true
+    },
+    "news_settings": {
+      "digest_at": true,
+      "push": true,
+      "push_max": true,
+      "setup": true
+    },
     "stats_gpu": {
       "index": true,
       "name": true,
@@ -764,6 +939,10 @@
       "message.updated": [
         "conversation_id",
         "message"
+      ],
+      "news.updated": [
+        "new",
+        "updated_at"
       ],
       "reasoning.final": [
         "conversation_id",

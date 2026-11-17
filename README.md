@@ -38,6 +38,8 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 14 | Watchers: the agent's watch cards, the judge between runs, hit pushes with the link, cron jobs through the helper; the missed morning brief written late | done |
 | 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`); the posting app's icon | done |
 | 16 | Personal profile: a core in every agent run's instructions and topic files the agent reads on demand, kept per conversation; read and edited by the app; the part marked for the General chats | done |
+| 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
+| 18 | News (N1b): scoring, grouping, Hungarian summaries and article text between runs; Google News links; push; the weekly | next |
 
 ## Development
 
@@ -160,6 +162,20 @@ the desktop agent's instead.
 | `PUT` | `/api/v1/persona/profile` | `{sections: [{title, text, general?}]}` (at most 12, a text of at most 4000 characters) replaces the core → `persona`; 503 `persona_no_store`, `persona_not_writable` |
 | `PUT` | `/api/v1/persona/topics/{name}` | `{title, summary?, text, general?}` creates or replaces a topic file (`name`: lowercase letters, digits, `-`) → `persona`; 409 `too_many_topics` |
 | `DELETE` | `/api/v1/persona/topics/{name}` | → `persona`; 404 `topic_not_found` |
+| `GET` | `/api/v1/news` | `news_digest`: the Dashboard's News block; see "News" |
+| `GET` | `/api/v1/news/items?topic=&saved=&before=&limit=` | `{data: [news_item], next_before}`: the lead stories, newest first; `saved=true`: the saved ones |
+| `GET` | `/api/v1/news/items/{id}` | `news_story`: a story with its other sources (a duplicate's id opens its story); 404 `news_item_not_found` |
+| `PATCH` | `/api/v1/news/items/{id}` | `{read?, saved?, feedback?: more\|less\|null}` → `news_story` |
+| `GET` | `/api/v1/news/topics` | `{data: [news_topic]}` by position |
+| `POST` | `/api/v1/news/topics` | `{id, name, description?, position?, enabled?}` → 201 `news_topic`; 409 `news_topic_exists`, `too_many_topics` |
+| `PATCH` | `/api/v1/news/topics/{id}` | `{name?, description?, position?, enabled?}` → `news_topic` |
+| `DELETE` | `/api/v1/news/topics/{id}` | 204; its feeds go too, its stories stay without a topic |
+| `GET` | `/api/v1/news/sources` | `{data: [news_source]}`: the feeds and what each answered last |
+| `POST` | `/api/v1/news/sources` | `{url, topic, id?, kind?, window_h?, every_min?, enabled?}` → 201 `news_source`; 409 `news_source_exists`, `too_many_sources` |
+| `PATCH` | `/api/v1/news/sources/{id}` | `{enabled?, topic?, window_h?, every_min?}` → `news_source` ("Hide this source": `enabled: false`) |
+| `DELETE` | `/api/v1/news/sources/{id}` | 204 |
+| `GET` | `/api/v1/news/settings` | `news_settings`: `{setup, digest_at, push, push_max}` |
+| `PATCH` | `/api/v1/news/settings` | any of them → `news_settings` |
 | `GET` | `/api/v1/meta` | no auth: `{server_version, api_revision, revision, python, …}` |
 | `WS` | `/api/v1/ws` | see below |
 
@@ -188,7 +204,8 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `message.delta`, `message.interim`, `message.updated`, `run.queued`, `run.started`,
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
-`health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`),
+`watch.updated`, `watch.item`, `news.updated` (`{new, updated_at}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -571,6 +588,48 @@ General chat, which goes to a cloud model. What is not marked never leaves this 
 
 The files can also be edited by hand (as `delve`, or with `sudo`); the backend reads them
 when a chat starts. Nothing of the profile is logged.
+
+### News
+
+Stories from the web for one reader (N1, API 14). The backend never fetches the web
+(delve-infra D-58): an hourly no-agent cron job of the agent's user reads the feeds and
+hands the new items back as batch files. The two meet in two places:
+
+| Where | Written by | Content |
+|---|---|---|
+| `DELVE_NEWS_DIR/sources.json` (`/var/lib/delve-news`, 2750 `delve:agent`) | the backend, whenever a topic or feed changes and hourly | `{v: 1, sources: [{id, url, kind, window_h, every_min}]}`: the enabled feeds of the enabled topics |
+| `DELVE_NEWS_BATCH_DIR/batch-*.json` (the agent's `~/.hermes/cards/news`, read-only here) | the collector, one per run (it removes them after 3 days) | `{v: 1, at, sources: [{id, status, http, items, new, error_code, error}], items: [{key, source, url, title, publisher, published, summary, gn, kind}]}` |
+
+Every `DELVE_NEWS_POLL_S` the batches not read yet are taken in (each once,
+`news_batches`; a broken one is recorded with its error and never retried). An item of a
+feed that is gone or hidden by now is dropped. A story is stored under the collector's key
+(a hash of its normalised URL); one whose folded title (lower case, no accents, letters and
+digits) a lead story of the last 72 hours has already is stored as its duplicate - the
+lists show the lead with `sources` (how many feeds carried it), the story view lists the
+others. Titles shorter than 12 characters never match. The releases of a `release` feed
+(GitHub `releases.atom`) are one row per feed and day: `"llama.cpp: 10 releases (b12468 -
+b12477)"`, `releases: [{tag, url, published_at}]` newest first. Each feed's last report is
+kept on it (`last_status`: `ok`, `not_modified`, `skipped` - rate limited or out of time -
+or `error` with `errors_in_row`); `failing` in the digest counts the feeds that failed 3
+times in a row. Stories older than `DELVE_NEWS_RETENTION_DAYS` go, saved ones stay.
+
+`news_digest`: `top` (at most 4 unread lead stories of the last 24 hours, the best score
+first, then the newest), `new` (how many unread there are), `updated_at` (the last batch),
+`state` (`empty` before the first batch, else `ok`), `sources`, `failing`. Until scoring
+(N1b) `score`, `why`, `setup` and `summary_hu` are null and the order is by time.
+
+**What the operator reads is personal** - the topics with their descriptions (what the
+model will score against), the feeds, and `setup` (a line about his own machines, for
+marking the stories that touch them). None of it is in a repository: it is imported once
+and edited in the app.
+
+```sh
+sudo delve news import < news.json      # topics, sources, settings; --replace drops the rest
+sudo delve news export > news.json      # the same format, for a backup
+```
+
+The format is `deploy/news.example.json` (an invented reader). The import checks
+everything before it writes anything and writes `sources.json` at the end.
 
 ## Pre-commit hook
 
