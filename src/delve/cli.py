@@ -1,5 +1,5 @@
 """Command line: `delve-backend [serve]`, `delve-backend pair`,
-`delve-backend token {create,list,revoke}`, `delve-backend news {import,export,rescore}` and
+`delve-backend token {create,list,revoke}`, `delve-backend news {import,export,rescore,split}` and
 `delve-backend helper <verb>`.
 
 The token commands only need the database (DELVE_DATABASE_URL), like Alembic, so they
@@ -120,7 +120,9 @@ async def _token_revoke(device_id: str) -> int:
     return 0 if ok else 1
 
 
-async def _news(action: str, replace: bool = False, hours: int = 48) -> int:
+async def _news(
+    action: str, replace: bool = False, hours: int = 48, story: str | None = None
+) -> int:
     from delve.events import EventHub
     from delve.news import NewsError, NewsService
 
@@ -146,6 +148,19 @@ async def _news(action: str, replace: bool = False, hours: int = 48) -> int:
             print(
                 f"news: {n} stories of the last {hours} hours will be scored again "
                 "(when llama is idle)",
+                file=sys.stderr,
+            )
+            return 0
+        if action == "split":
+            assert story is not None  # noqa: S101 - argparse requires it
+            try:
+                lead, title, n = await news.split(int(story) if story.isdigit() else story)
+            except NewsError as exc:
+                print(f"news split: {exc.message}", file=sys.stderr)
+                return 1
+            print(
+                f"news: story {lead} ({title[:60]}): {n} stories split off; they and the "
+                "story are scored and grouped again (when llama is idle)",
                 file=sys.stderr,
             )
             return 0
@@ -225,6 +240,10 @@ def build_parser() -> argparse.ArgumentParser:
         "rescore", help="score, group and explain the recent stories again (topics changed)"
     )
     rescore.add_argument("--hours", type=int, default=48, choices=range(1, 49), metavar="1-48")
+    split = nsub.add_parser(
+        "split", help="undo the model's merges in one story of the last 48 hours"
+    )
+    split.add_argument("story", help="the story's id, or a piece of its title")
     helper = sub.add_parser("helper", help="ask the privileged helper (as the backend would)")
     helper.add_argument("verb", choices=HELPER_VERBS)
     helper.add_argument("arg", nargs="?", help="the job id, for agent.cron.pause|resume|run")
@@ -234,7 +253,12 @@ def build_parser() -> argparse.ArgumentParser:
 def _db_commands(args: argparse.Namespace) -> int:
     if args.command == "news":
         return asyncio.run(
-            _news(args.action, getattr(args, "replace", False), getattr(args, "hours", 48))
+            _news(
+                args.action,
+                getattr(args, "replace", False),
+                getattr(args, "hours", 48),
+                getattr(args, "story", None),
+            )
         )
     if args.command == "pair":
         try:

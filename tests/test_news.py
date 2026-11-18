@@ -31,6 +31,7 @@ from delve.news import (
     check_source,
     check_topic,
     fold_title,
+    hanging_together,
     parse_batch,
     pick_related,
     release_title,
@@ -617,6 +618,12 @@ def test_cli_import_and_export(
     assert "0 stories of the last 12 hours will be scored again" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         cli.main(["news", "rescore", "--hours", "49"])
+    assert cli.main(["news", "split", "no such title"]) == 1
+    assert "news split: no story of the last 48 hours has 'no such title'" in (
+        capsys.readouterr().err
+    )
+    assert cli.main(["news", "split", "424242"]) == 1
+    assert "news split: no story 424242" in capsys.readouterr().err
 
 
 # --- REST --------------------------------------------------------------------------------------
@@ -714,10 +721,9 @@ def test_prompts_and_parsers() -> None:
     user = body["messages"][1]["content"]
     assert "[1] A title | Pub | " + "x" * 200 + "\n[2] B" in user and "x" * 201 not in user
     assert "[1] A title | Pub\n" in group_body(system, cands)["messages"][1]["content"]
-    assert (
-        '"topic": "<one of: tech, linux>"'
-        in why_body(system, topics, cands)["messages"][1]["content"]
-    )
+    why_user = why_body(system, topics, cands)["messages"][1]["content"]
+    assert '"topic": "<one of: tech, linux>"' in why_user
+    assert "never repeats the score" in why_user and "kötelezően olvasandó" in why_user
     assert parse_scores("1 7 2\n[2] 3 0\n2 9 1\n3 5 1\nfoo\n1 9 9\n4 10 1", 3, 2) == {
         1: (7, 2),
         2: (3, 0),
@@ -1103,3 +1109,99 @@ async def test_rescore(menv: ModelEnv) -> None:
     assert t["tool: b1"].score == 6
     menv.now = NOW + timedelta(hours=3)
     assert await menv.svc.rescore(1) == 0
+
+
+def test_a_group_hangs_together() -> None:
+    """What the model put together stays together only where it hangs together: the same
+    topic, or a title word in common (not a year). Two live mistakes, and two good groups."""
+    msc = "MSC becomes Global Shipping Partner of Emirates Team New Zealand for the 38th AC"
+    assert hanging_together([
+        (1, msc, "sailing"),
+        (2, "GTA 6 receives good news at The Game Awards 2026 ahead of its release.", "games"),
+        (3, "Everything to know as 'Grand Theft Auto VI' release countdown begins", "games"),
+    ]) == [2, 3]  # fmt: skip
+    assert hanging_together([
+        (1, "Grand Theft Auto VI video game release approaches in Miami", "games"),
+        (2, "Magyar Péter: Lezárjuk a 23 ezer milliárdos autópálya-koncesszió ügyét", "hungary"),
+        (3, "FILE PHOTO: Grand Theft Auto VI video game release approaches in Miami", "games"),
+    ]) == [1, 3]  # fmt: skip
+    # the same event in two languages, the same topic; one name across two topics
+    assert hanging_together(
+        [(1, "Crimean bridge hit", "world"), (2, "Megrongálták a kercsi hidat", "world")]
+    ) == [1, 2]  # fmt: skip
+    assert hanging_together(
+        [(1, "Nvidia unveils Rubin", "hardware"), (2, "Rubin: the HPC chip", "tech")]
+    ) == [1, 2]  # fmt: skip
+    # a year ties nothing: two lone stories, the first stays alone (no group)
+    assert hanging_together(
+        [(1, "Game Awards 2026 nominees", "games"), (2, "SailGP 2026 season final", "sailing")]
+    ) == [1]  # fmt: skip
+    # a chain holds: A-B by topic, B-C by a word; no topic ties nothing
+    assert hanging_together([
+        (1, "Bridge hit at night", "world"),
+        (2, "Kyiv without power", "world"),
+        (3, "Kyiv power cuts: the numbers", None),
+        (4, "A lone story", None),
+    ]) == [1, 2, 3]  # fmt: skip
+
+
+@pg
+async def test_grouping_leaves_out_what_does_not_belong(menv: ModelEnv) -> None:
+    titles = [("o-news", "Bridge hit in the night"), ("o-news", "Éjjel találat érte a hidat"),
+              ("t-news", "Road concession closed")]  # fmt: skip
+    menv.drop(batch([item(n, src, title=t) for n, (src, t) in enumerate(titles, 1)]))
+    await menv.svc.ingest()
+    menv.answers = ["1 7 0\n2 8 0\n3 9 0"]  # newest first: [1] is item 3; the feeds' topics
+    assert await menv.step() is True
+    menv.now = NOW + timedelta(minutes=21)
+    menv.answers = ["1, 2, 3"]  # the model puts the concession in too
+    assert await menv.step() is True
+    t = await menv.by_title()
+    lead = t["Bridge hit in the night"]
+    assert t["Éjjel találat érte a hidat"].dup_of == lead.id
+    road = t["Road concession closed"]
+    assert road.dup_of is None and road.grouped_at is not None and lead.score == 9
+
+
+@pg
+async def test_split_a_story(menv: ModelEnv) -> None:
+    msc, gta = "MSC becomes Global Shipping Partner of ETNZ", "GTA 6 receives good news"
+    menv.drop(batch([
+        item(1, "o-news", title=msc), item(2, "t-news", title=gta), item(3, "t-news", title=gta),
+        item(4, "t-news", title=msc), item(5), item(6),
+    ]))  # fmt: skip
+    await menv.svc.ingest()
+    rows = {r.key: r for r in await menv.rows()}
+    one, two = rows[key(1)].id, rows[key(2)].id
+    # the same title in two feeds is one story at once: 3 under 2, 4 under 1
+    assert rows[key(3)].dup_of == two and rows[key(4)].dup_of == one
+    async with menv.db() as s:  # scored, explained, and the model merged 2 into 1
+        await s.execute(
+            update(NewsItem)
+            .where(NewsItem.dup_of.is_(None))
+            .values(score=7, scored_at=NOW, grouped_at=NOW, why="x", topic_id="tech")
+        )
+        await s.execute(update(NewsItem).where(NewsItem.id == one).values(score=9))
+        await s.execute(update(NewsItem).where(NewsItem.dup_of == two).values(dup_of=one))
+        await s.execute(update(NewsItem).where(NewsItem.id == two).values(dup_of=one))
+        await s.commit()
+    for bad, code in (("zz", "invalid_value"), ("no such words", "not_found"),
+                      ("Story number", "ambiguous"), (424242, "not_found")):  # fmt: skip
+        with pytest.raises(NewsError) as err:
+            await menv.svc.split(bad)
+        assert err.value.code == code
+    menv.now = NOW + timedelta(hours=1)
+    assert await menv.svc.split("global SHIPPING") == (one, msc, 1)
+    rows = {r.key: r for r in await menv.rows()}
+    assert rows[key(4)].dup_of == one  # the lead's own title stays
+    assert rows[key(2)].dup_of is None and rows[key(3)].dup_of == two  # the scored one leads
+    for k, topic in ((1, "orienteering"), (2, "tech")):  # from the feed's topic, again
+        r = rows[key(k)]
+        assert (r.score, r.why, r.grouped_at, r.topic_id) == (None, None, None, topic)
+    assert rows[key(5)].score == 7  # the others are not touched
+    # a member's id finds its story; nothing left to split
+    assert await menv.svc.split(rows[key(4)].id) == (one, msc, 0)
+    menv.now = NOW + timedelta(hours=49)
+    with pytest.raises(NewsError) as err:
+        await menv.svc.split(one)
+    assert err.value.code == "too_old"

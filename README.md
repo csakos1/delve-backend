@@ -638,8 +638,11 @@ did not move (our own requests do not count). One step at a time, the first that
    numbers; rarer words count more), then the ones of the same topics: the items about *the
    same specific event* (also across Hungarian and English) become one story under its
    earliest item (`dup_of`, the others listed in the story view), with the best score of
-   the group. Stories kept apart once are not merged by a later answer alone. Release rows
-   are not grouped.
+   the group. Stories kept apart once are not merged by a later answer alone. A group
+   keeps only the items that hang together - two are tied by the same topic or a title
+   word in common (not a year) - and of those the largest part; an item the model put in
+   by mistake (a sailing sponsor next to a game launch) stays a story of its own. Release
+   rows are not grouped.
 3. **why** - up to 5 stories scored 5 or more after grouping, best first: the topic, a
    Hungarian "why" of at most 12 words, and `setup` (a release row is always `true`: the
    reader's own tools).
@@ -651,6 +654,12 @@ and then every half hour.
 After a topic's description changed, `sudo delve news rescore [--hours 1-48]` sends the
 stories of those hours through the three steps again (from their feed's topic; merged
 duplicates, pushes, read / saved / feedback stay).
+
+`sudo delve news split <id | a piece of the title>` undoes the model's merges in one story
+of the last 48 hours: the items with another title leave it (those with the same title
+stay together), and the story and the new ones go through the three steps again. The
+same headline in several feeds stays one story. A piece of a title must match exactly one
+story; if more match, they are listed with their ids.
 
 **Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
 most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to

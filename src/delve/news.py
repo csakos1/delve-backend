@@ -188,6 +188,35 @@ def pick_related(
     return picked + rest[: room - len(picked)]
 
 
+_YEAR = re.compile(r"(19|20)\d\d")
+
+
+def hanging_together(members: Sequence[tuple[int, str, str | None]]) -> list[int]:
+    """Of the stories (id, title, topic) the model put into one group, the ones that hang
+    together: two are tied when they have the same topic or a title word in common (not a
+    year). The largest tied part stays (on a tie, the one with the first member); the rest
+    were put there by mistake - live, a sailing sponsor and two GTA launch stories, a road
+    concession and a GTA story became one."""
+    words = [{w for w in title_words(t) if not _YEAR.fullmatch(w)} for _, t, _ in members]
+    part = list(range(len(members)))
+
+    def root(n: int) -> int:
+        while part[n] != n:
+            part[n] = part[part[n]]
+            n = part[n]
+        return n
+
+    for a in range(len(members)):
+        for b in range(a + 1, len(members)):
+            same_topic = members[a][2] is not None and members[a][2] == members[b][2]
+            if same_topic or words[a] & words[b]:
+                part[root(a)] = root(b)
+    sizes = Counter(root(n) for n in range(len(members)))
+    best = max(sizes.values(), default=0)
+    keep = next((root(n) for n in range(len(members)) if sizes[root(n)] == best), None)
+    return [members[n][0] for n in range(len(members)) if root(n) == keep]
+
+
 def release_label(publisher: str | None, source_id: str) -> str:
     label = re.sub(r"^Release notes from\s+", "", publisher or "", flags=re.I).strip()
     return label or source_id
@@ -1010,10 +1039,15 @@ class NewsService:
         text, tokens = await self._ask(group_body(system, [_candidate(r) for r in rows]))
         groups = [] if text.strip().lower().startswith("none") else parse_groups(text, len(rows))
         now = self._clock()
-        merged = 0
+        merged = left_out = 0
         async with self._sm() as s:
             for group in groups:
                 members = [rows[n - 1] for n in group]
+                keep = hanging_together([(m.id, m.title, m.topic_id) for m in members])
+                left_out += len(members) - len(keep)
+                members = [m for m in members if m.id in keep]
+                if len(members) < 2:
+                    continue
                 if all(m.grouped_at is not None for m in members):
                     continue  # stories kept apart before stay apart
                 head = min(members, key=lambda m: (m.seen_at, m.id))
@@ -1037,8 +1071,11 @@ class NewsService:
                 .values(grouped_at=now)
             )
             await s.commit()
-        if merged:
-            log.info("news stories merged", extra={"groups": len(groups), "items": merged})
+        if merged or left_out:
+            log.info(
+                "news stories merged",
+                extra={"groups": len(groups), "items": merged, "left_out": left_out},
+            )
         return tokens
 
     async def _why(self, rows: list[NewsItem]) -> dict[str, int]:
@@ -1103,24 +1140,102 @@ class NewsService:
             raise NewsError("bad_hours", f"hours: 1 - {RESCORE_MAX_HOURS}")
         since = self._clock() - timedelta(hours=hours)
         which = and_(NewsItem.kind == "feed", NewsItem.dup_of.is_(None), NewsItem.seen_at >= since)
-        feed_topic = (
-            select(NewsSource.topic_id).where(NewsSource.id == NewsItem.source_id).scalar_subquery()
-        )
         async with self._sm() as s:
             n = await s.scalar(select(func.count()).select_from(NewsItem).where(which))
             await s.execute(
                 update(NewsItem)
                 .where(which)
-                .values(
-                    score=None, scored_at=None, score_attempts=0, why=None, why_attempts=0,
-                    setup=None, grouped_at=None,
-                    topic_id=func.coalesce(feed_topic, NewsItem.topic_id),
-                )
+                .values(**_unscored())
                 .execution_options(synchronize_session=False)
-            )  # fmt: skip
+            )
             await s.commit()
         log.info("news rescore", extra={"hours": hours, "items": int(n or 0)})
         return int(n or 0)
+
+    async def split(self, story: int | str) -> tuple[int, str, int]:
+        """Undo the model's merges in one story (an id, or a piece of a title that matches
+        one story of the last 48 hours): the items whose folded title differs from the
+        lead's leave it - those with the same title stay together - and the lead and every
+        new story go through score, grouping and why again (the grouping now checks that a
+        group hangs together). Items with the lead's own title (the same headline in other
+        feeds) stay. (lead id, lead title, how many stories were split off)."""
+        now = self._clock()
+        async with self._sm() as s:
+            head = await self._story(s, story, now)
+            members = list(
+                (
+                    await s.execute(
+                        select(NewsItem).where(NewsItem.dup_of == head.id).order_by(NewsItem.id)
+                    )
+                ).scalars()
+            )
+            own = fold_title(head.title)
+            parts: dict[str, list[NewsItem]] = {}
+            for m in members:
+                if fold_title(m.title) != own:
+                    parts.setdefault(fold_title(m.title), []).append(m)
+            leads = []
+            for part in parts.values():
+                lead = min(part, key=lambda m: (m.score is None, m.seen_at, m.id))
+                leads.append(lead.id)
+                others = [m.id for m in part if m.id != lead.id]
+                if others:
+                    await s.execute(
+                        update(NewsItem).where(NewsItem.id.in_(others)).values(dup_of=lead.id)
+                    )
+            if leads:
+                await s.execute(update(NewsItem).where(NewsItem.id.in_(leads)).values(dup_of=None))
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id.in_([head.id, *leads]))
+                    .values(**_unscored())
+                    .execution_options(synchronize_session=False)
+                )
+            await s.commit()
+            out = (head.id, head.title, len(leads))
+        log.info("news split", extra={"story": out[0], "stories": out[2]})
+        return out
+
+    async def _story(self, s: AsyncSession, story: int | str, now: datetime) -> NewsItem:
+        recent = now - timedelta(hours=RESCORE_MAX_HOURS)
+        if isinstance(story, int):
+            row = await s.get(NewsItem, story)
+            if row is not None and row.dup_of is not None:
+                row = await s.get(NewsItem, row.dup_of)
+            if row is None:
+                raise NewsError("not_found", f"no story {story}", 404)
+        else:
+            text = story.strip()
+            if len(text) < 3:
+                raise NewsError("invalid_value", "a piece of a title: at least 3 characters")
+            pattern = "%" + re.sub(r"([\\%_])", r"\\\1", text) + "%"
+            found = list(
+                (
+                    await s.execute(
+                        select(NewsItem)
+                        .where(
+                            NewsItem.dup_of.is_(None),
+                            NewsItem.kind == "feed",
+                            NewsItem.seen_at >= recent,
+                            NewsItem.title.ilike(pattern, escape="\\"),
+                        )
+                        .order_by(NewsItem.id)
+                        .limit(11)
+                    )
+                ).scalars()
+            )
+            if not found:
+                raise NewsError("not_found", f"no story of the last 48 hours has {text!r}", 404)
+            if len(found) > 1:
+                lines = "\n".join(f"  {r.id}  {r.title[:90]}" for r in found[:10])
+                more = "\n  ..." if len(found) > 10 else ""
+                raise NewsError("ambiguous", f"more stories have {text!r}:\n{lines}{more}", 409)
+            row = found[0]
+        if row.kind != "feed":
+            raise NewsError("not_a_story", "a day of releases is never merged", 409)
+        if row.seen_at < recent:
+            raise NewsError("too_old", "only stories of the last 48 hours are scored again", 409)
+        return row
 
     # --- push ----------------------------------------------------------------------------
 
@@ -1626,6 +1741,19 @@ def _one_per_topic(rows: list[NewsItem], n: int) -> list[NewsItem]:
         if k not in picked:
             picked.append(k)
     return [rows[k] for k in sorted(picked)]
+
+
+def _unscored() -> dict[str, Any]:
+    """The values that send a lead story through score, grouping and why again, from its
+    feed's topic (the model's topic is decided again too)."""
+    feed_topic = (
+        select(NewsSource.topic_id).where(NewsSource.id == NewsItem.source_id).scalar_subquery()
+    )
+    return {
+        "score": None, "scored_at": None, "score_attempts": 0, "why": None, "why_attempts": 0,
+        "setup": None, "grouped_at": None,
+        "topic_id": func.coalesce(feed_topic, NewsItem.topic_id),
+    }  # fmt: skip
 
 
 def _candidate(r: NewsItem) -> Candidate:

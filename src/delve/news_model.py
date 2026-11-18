@@ -10,7 +10,9 @@ the ones the N0 / N0b fixtures measured on the user's machine (Qwen3.8-27B, no t
   but also put different events of one topic together; live, the news around one game's
   launch went into one story - the prompt says so, with examples);
 - **why** - the stories worth showing: topic, a Hungarian "why" of at most 12 words, and
-  whether it touches the reader's own setup (N0b: 15/15 Hungarian with the example).
+  whether it touches the reader's own setup (N0b: 15/15 Hungarian with the example; live,
+  many whys only repeated the score - "must read", "the followed sport" - so the prompt
+  forbids that and has a second example about what happened).
 
 Every item is data copied from a feed: the system prompt says so, and no tool is offered.
 Thinking is off (`enable_thinking: false`)."""
@@ -124,11 +126,15 @@ def why_body(system: str, topics: Sequence[TopicRef], items: Sequence[Candidate]
         '{"i": <item number>, "topic": "<one of: ' + ids + '>", '
         '"why": "<why the reader would care, in Hungarian, at most 12 words>", '
         '"setup": <true if it directly concerns the reader\'s own setup, else false>}\n'
-        "The why is ALWAYS in Hungarian, even when the item is English. It is about the "
-        "news itself; it never mentions duplicates, item numbers or the reader in the third "
-        "person.\n"
-        'Example: {"i": 7, "topic": "linux", "why": "Az Arch-frissítés kézi lépést kér a '
-        'gépeden.", "setup": true}\n\n'
+        "The why is ALWAYS in Hungarian, even when the item is English. It says what "
+        "happened and why that matters; it never mentions duplicates, item numbers or the "
+        "reader in the third person, and never repeats the score, the topic or how "
+        'important the topic is ("must read", "kötelezően olvasandó", "a követett '
+        'sportág", "releváns a témában").\n'
+        'Examples: {"i": 7, "topic": "linux", "why": "Az Arch-frissítés kézi lépést kér a '
+        'gépeden.", "setup": true}\n'
+        '{"i": 3, "topic": "sailing", "why": "Vízre tette új AC75-ösét a Team USA Nápoly '
+        'előtt.", "setup": false}\n\n'
         + "\n".join(_item_line(n, c, excerpt=True) for n, c in enumerate(items, 1))
     )
     return _body(system, user, WHY_MAX_TOKENS, 0.2)
