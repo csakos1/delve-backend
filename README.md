@@ -41,6 +41,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
 | 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
 | 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
+| 20 | News for the app (N2, API 17): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more | done |
 
 ## Development
 
@@ -164,7 +165,8 @@ the desktop agent's instead.
 | `PUT` | `/api/v1/persona/topics/{name}` | `{title, summary?, text, general?}` creates or replaces a topic file (`name`: lowercase letters, digits, `-`) → `persona`; 409 `too_many_topics` |
 | `DELETE` | `/api/v1/persona/topics/{name}` | → `persona`; 404 `topic_not_found` |
 | `GET` | `/api/v1/news` | `news_digest`: the Dashboard's News block; see "News" |
-| `GET` | `/api/v1/news/items?topic=&saved=&weekly=&before=&limit=` | `{data: [news_item], next_before}`: the lead stories, newest first; `saved=true`: the saved ones; `weekly=true`: the best unopened ones of the last 7 days (one page, best first) |
+| `GET` | `/api/v1/news/items?topic=&saved=&weekly=&min_score=&before=&limit=` | `{data: [news_item], next_before}`: the lead stories, newest first; `saved=true`: the saved ones; `weekly=true`: the best unopened ones of the last 7 days (one page, best first); `min_score` (0-9): only the stories scored that much (unscored ones are left out; the app asks for 5) |
+| `GET` | `/api/v1/news/sections` | `{data: [news_section]}` (API 17): the News page's All view - each enabled topic in its order (`topic`, `name`), `count` (its stories of the last 24 hours scored 5 or more) and `top` (the best 3 of them, read ones too) |
 | `GET` | `/api/v1/news/items/{id}` | `news_story`: a story with its other sources (a duplicate's id opens its story); 404 `news_item_not_found` |
 | `PATCH` | `/api/v1/news/items/{id}` | `{read?, saved?, feedback?: more\|less\|null}` → `news_story` |
 | `GET` | `/api/v1/news/topics` | `{data: [news_topic]}` by position |
@@ -617,8 +619,9 @@ kept on it (`last_status`: `ok`, `not_modified`, `skipped` - rate limited or out
 or `error` with `errors_in_row`); `failing` in the digest counts the feeds that failed 3
 times in a row. Stories older than `DELVE_NEWS_RETENTION_DAYS` go, saved ones stay.
 
-`news_digest`: `top` (at most 4 unread lead stories of the last 24 hours, the best score
-first, then the newest - one per topic while other topics have one to show), `new` (how many unread there are), `updated_at` (the last batch),
+`news_digest`: `top` (at most 4 unread lead stories of the last 24 hours scored 5 or more -
+the app shows nothing below 5 - the best score first, then the newest, one per topic while
+other topics have one to show), `new` (how many of those are unread), `updated_at` (the last batch),
 `state` (`empty` before the first batch, else `ok`), `sources`, `failing`, `weekly`
 (`{count}` on Mondays from `digest_at` on - the Dashboard's "Last week" row - else null).
 `summary_hu` is null until the story has a text and its summary.

@@ -96,6 +96,8 @@ DUP_WINDOW = timedelta(hours=72)
 DUP_MIN_CHARS = 12  # a shorter folded title ("live", "update") never makes a duplicate
 MAX_RELEASES = 30  # per source and day
 DIGEST_TOP = 4
+SHOW_MIN_SCORE = 5  # the app shows a story from this score on (N2): the block, the sections
+SECTION_TOP = 3  # the News page's All view: the best of each topic (N2)
 DIGEST_WINDOW = timedelta(hours=24)
 BATCH_KEEP = timedelta(days=10)  # the collector removes its files after 3
 CLEANUP_S = 3600.0
@@ -1587,19 +1589,14 @@ class NewsService:
         now = self._clock()
         since = now - DIGEST_WINDOW
         async with self._sm() as s:
-            recent = and_(self._visible(), NewsItem.seen_at >= since)
+            recent = and_(
+                self._visible(), NewsItem.seen_at >= since, NewsItem.score >= SHOW_MIN_SCORE
+            )
             unread = and_(recent, NewsItem.read_at.is_(None))
             best = list(
                 (
                     await s.execute(
-                        self._base()
-                        .where(unread)
-                        .order_by(
-                            NewsItem.score.desc().nulls_last(),
-                            func.coalesce(NewsItem.published_at, NewsItem.seen_at).desc(),
-                            NewsItem.id.desc(),
-                        )
-                        .limit(DIGEST_TOP * 10)
+                        self._base().where(unread).order_by(*_by_rank()).limit(DIGEST_TOP * 10)
                     )
                 ).scalars()
             )
@@ -1667,6 +1664,7 @@ class NewsService:
         topic: str | None = None,
         saved: bool = False,
         weekly: bool = False,
+        min_score: int | None = None,
         before: int | None = None,
         limit: int = 50,
     ) -> tuple[list[dict[str, Any]], int | None]:
@@ -1683,6 +1681,8 @@ class NewsService:
                 q = q.where(self._visible())
             if topic is not None:
                 q = q.where(NewsItem.topic_id == topic)
+            if min_score is not None:  # an unscored story is not shown yet
+                q = q.where(NewsItem.score >= min_score)
             if before is not None:
                 q = q.where(NewsItem.id < before)
             q = q.order_by(NewsItem.id.desc()).limit(limit + 1)
@@ -1691,6 +1691,71 @@ class NewsService:
             rows = rows[:limit]
             data = await self._with_counts(s, rows)
         return data, (rows[-1].id if more and rows else None)
+
+    async def sections(self) -> list[dict[str, Any]]:
+        """The News page's All view (N2): each enabled topic in its order with its stories of
+        the last day scored `SHOW_MIN_SCORE` or more - `count`, and the best `SECTION_TOP`
+        (read ones too: the section does not shift while it is read)."""
+        since = self._clock() - DIGEST_WINDOW
+        shown = and_(
+            self._visible(),
+            NewsItem.topic_id.is_not(None),
+            NewsItem.seen_at >= since,
+            NewsItem.score >= SHOW_MIN_SCORE,
+        )
+        async with self._sm() as s:
+            topics = list(
+                (
+                    await s.execute(
+                        select(NewsTopic)
+                        .where(NewsTopic.enabled)
+                        .order_by(NewsTopic.position, NewsTopic.id)
+                    )
+                ).scalars()
+            )
+            counts: dict[Any, int] = dict(
+                (
+                    await s.execute(
+                        select(NewsItem.topic_id, func.count())
+                        .select_from(NewsItem)
+                        .outerjoin(NewsSource, NewsSource.id == NewsItem.source_id)
+                        .outerjoin(NewsTopic, NewsTopic.id == NewsItem.topic_id)
+                        .where(shown)
+                        .group_by(NewsItem.topic_id)
+                    )
+                ).all()
+            )
+            rank = (
+                func.row_number()
+                .over(partition_by=NewsItem.topic_id, order_by=_by_rank())
+                .label("rank")
+            )
+            ranked = (
+                select(NewsItem.id, rank)
+                .outerjoin(NewsSource, NewsSource.id == NewsItem.source_id)
+                .outerjoin(NewsTopic, NewsTopic.id == NewsItem.topic_id)
+                .where(shown)
+                .subquery()
+            )
+            best = list(
+                (
+                    await s.execute(
+                        select(NewsItem)
+                        .join(ranked, ranked.c.id == NewsItem.id)
+                        .where(ranked.c.rank <= SECTION_TOP)
+                        .order_by(NewsItem.topic_id, ranked.c.rank)
+                    )
+                ).scalars()
+            )
+            out = await self._with_counts(s, best)
+        by_topic: dict[str, list[dict[str, Any]]] = {}
+        for d in out:
+            by_topic.setdefault(d["topic"], []).append(d)
+        return [
+            {"topic": t.id, "name": t.name, "count": int(counts.get(t.id, 0)),
+             "top": by_topic.get(t.id, [])}
+            for t in topics
+        ]  # fmt: skip
 
     async def item(self, item_id: int) -> dict[str, Any]:
         async with self._sm() as s:
@@ -1990,6 +2055,15 @@ def _write_file(tmp: Path, path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _by_rank() -> tuple[Any, ...]:
+    """The best score first, then the newest (the Dashboard block, the sections)."""
+    return (
+        NewsItem.score.desc().nulls_last(),
+        func.coalesce(NewsItem.published_at, NewsItem.seen_at).desc(),
+        NewsItem.id.desc(),
+    )
 
 
 def _one_per_topic(rows: list[NewsItem], n: int) -> list[NewsItem]:

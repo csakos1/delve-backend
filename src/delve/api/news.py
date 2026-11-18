@@ -32,8 +32,8 @@ def _refused(exc: NewsError) -> HTTPException:
 
 @router.get("/news")
 async def news_digest(request: Request, _device: Device) -> dict[str, Any]:
-    """The Dashboard's News block: `top` (at most 4 unread stories of the last day, the
-    best first - newest first until scoring exists), `new` (unread stories of the last day),
+    """The Dashboard's News block: `top` (at most 4 unread stories of the last day scored 5
+    or more, the best first, one a topic), `new` (how many of those are unread),
     `updated_at` (the collector's last batch), `state` (`empty` before the first batch),
     `sources` (enabled feeds), `failing` (feeds that failed 3 times in a row), `weekly`
     (`{count}` on Mondays from the digest time on, else null)."""
@@ -47,15 +47,25 @@ async def news_items(
     topic: Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,31}$")] = None,
     saved: bool = False,
     weekly: bool = False,
+    min_score: Annotated[int | None, Query(ge=0, le=9)] = None,
     before: Annotated[int | None, Query(ge=1)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict[str, Any]:
     """Newest first; `saved=true` the saved ones; `weekly=true` the best unopened stories of
-    the last 7 days (one page, best first)."""
+    the last 7 days (one page, best first); `min_score` leaves out the lower and the
+    unscored ones (the app: 5)."""
     data, next_before = await _svc(request).items(
-        topic=topic, saved=saved, weekly=weekly, before=before, limit=limit
+        topic=topic, saved=saved, weekly=weekly, min_score=min_score, before=before, limit=limit
     )
     return {"data": data, "next_before": next_before}
+
+
+@router.get("/news/sections")
+async def news_sections(request: Request, _device: Device) -> dict[str, Any]:
+    """The News page's All view (N2, API 17): `{data: [news_section]}` - each enabled topic
+    in its order, `count` (its stories of the last day scored 5 or more) and `top` (the best
+    3 of them, read ones too)."""
+    return {"data": await _svc(request).sections()}
 
 
 @router.get("/news/items/{item_id}")

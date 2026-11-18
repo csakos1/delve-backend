@@ -437,15 +437,16 @@ async def test_the_dashboard_block(env_: Env) -> None:
     env_.drop(batch([item(n) for n in range(1, 7)]))
     await env_.svc.ingest()
     rows = await env_.rows()
-    async with env_.db() as s:  # N1b will score; here by hand
-        await s.execute(update(NewsItem).where(NewsItem.id == rows[4].id).values(score=9))
-        await s.execute(update(NewsItem).where(NewsItem.id == rows[5].id).values(score=5))
+    assert (await env_.svc.digest())["top"] == []  # unscored stories are not shown (N2)
+    async with env_.db() as s:  # N1b scores; here by hand
+        for k, score in ((0, 8), (1, 7), (2, 6), (3, 4), (4, 9), (5, 5)):
+            await s.execute(update(NewsItem).where(NewsItem.id == rows[k].id).values(score=score))
         await s.commit()
     await env_.svc.mark(rows[0].id, {"read": True})
     d = await env_.svc.digest()
-    # best score first, then the newest; the read one is out
-    assert [i["id"] for i in d["top"]] == [rows[4].id, rows[5].id, rows[1].id, rows[2].id]
-    assert (d["new"], d["state"], d["updated_at"]) == (5, "ok", NOW.isoformat())
+    # best score first; the read one and the one below 5 are out, and not counted as new
+    assert [i["id"] for i in d["top"]] == [rows[4].id, rows[1].id, rows[2].id, rows[5].id]
+    assert (d["new"], d["state"], d["updated_at"]) == (4, "ok", NOW.isoformat())
     env_.now = NOW + timedelta(hours=25)
     assert (await env_.svc.digest())["top"] == []
 
@@ -478,6 +479,40 @@ async def test_lists_one_story_and_marks(env_: Env) -> None:
     assert {d["source"] for d in (await env_.svc.items())[0]} == {"t-news"}
     assert len((await env_.svc.items(saved=True))[0]) == 1
     assert "o-news" not in [s["id"] for s in env_.sources_file()["sources"]]
+
+
+@pg
+async def test_the_sections_and_the_score_floor(env_: Env) -> None:
+    """The News page's All view (N2): each enabled topic in order, its stories of the last
+    day scored 5+, the best 3 (read ones too); the lists can leave out the lower ones."""
+    env_.drop(batch([item(n, "o-news" if n <= 6 else "t-news") for n in range(1, 10)]))
+    await env_.svc.ingest()
+    t = {r.key: r for r in await env_.rows()}
+    scores = {1: 6, 2: 9, 3: 5, 4: 7, 5: 4, 6: None, 7: 8, 8: 5, 9: 2}
+    async with env_.db() as s:
+        for n, sc in scores.items():
+            await s.execute(update(NewsItem).where(NewsItem.id == t[key(n)].id).values(score=sc))
+        # an orienteering 9 of two days ago is not in the section
+        await s.execute(
+            update(NewsItem)
+            .where(NewsItem.id == t[key(3)].id)
+            .values(score=9, seen_at=NOW - timedelta(hours=30))
+        )
+        await s.commit()
+    await env_.svc.mark(t[key(2)].id, {"read": True})
+    sec = await env_.svc.sections()
+    got = [(x["topic"], x["count"], [i["id"] for i in x["top"]]) for x in sec]
+    # orienteering: 2 (9, read - still there), 4 (7), 1 (6); 5 (4) and 6 (unscored) are out
+    assert got == [
+        ("orienteering", 3, [t[key(2)].id, t[key(4)].id, t[key(1)].id]),
+        ("tech", 2, [t[key(7)].id, t[key(8)].id]),
+    ]
+    assert sec[0]["top"][0]["read"] is True and sec[0]["name"] == "Orienteering"
+    page, _ = await env_.svc.items(topic="orienteering", min_score=5)
+    assert [d["id"] for d in page] == [t[key(n)].id for n in (4, 3, 2, 1)]  # newest first
+    assert len((await env_.svc.items(topic="orienteering"))[0]) == 6
+    await env_.svc.update_topic("tech", {"enabled": False})
+    assert [x["topic"] for x in await env_.svc.sections()] == ["orienteering"]
 
 
 @pg
@@ -670,10 +705,25 @@ def test_routes(ndirs: tuple[Path, Path], client: TestClient, token: str) -> Non
     assert client.portal is not None
     assert client.portal.call(client.app.state.news.ingest) == 1  # type: ignore[attr-defined]
     d = client.get("/api/v1/news", headers=h).json()
+    assert (d["new"], d["top"]) == (0, [])  # not scored yet
+    assert client.get("/api/v1/news/items?min_score=5", headers=h).json()["data"] == []
+
+    async def score() -> None:
+        async with client.app.state.news._sm() as s:  # type: ignore[attr-defined]
+            await s.execute(update(NewsItem).values(score=7))
+            await s.commit()
+
+    client.portal.call(score)
+    d = client.get("/api/v1/news", headers=h).json()
     assert d["new"] == 1 and d["top"][0]["title"] == "Story number 1 about something"
     iid = d["top"][0]["id"]
-    items = client.get("/api/v1/news/items?topic=tech&limit=10", headers=h).json()
+    items = client.get("/api/v1/news/items?topic=tech&limit=10&min_score=5", headers=h).json()
     assert [i["id"] for i in items["data"]] == [iid] and items["next_before"] is None
+    assert client.get("/api/v1/news/items?min_score=10", headers=h).status_code == 422
+    sec = client.get("/api/v1/news/sections", headers=h).json()["data"]
+    assert [(x["topic"], x["name"], x["count"], [i["id"] for i in x["top"]]) for x in sec] == [
+        ("tech", "Tech", 1, [iid])
+    ]
     assert client.get("/api/v1/news/items?topic=BAD", headers=h).status_code == 422
     story = client.patch(f"/api/v1/news/items/{iid}", headers=h, json={"saved": True}).json()
     assert story["saved"] is True and story["others"] == [] and story["text"] is None

@@ -1,5 +1,5 @@
 {
-  "api_revision": 16,
+  "api_revision": 17,
   "rest": [
     {
       "method": "GET",
@@ -143,6 +143,7 @@
       "query": [
         "before",
         "limit",
+        "min_score",
         "saved",
         "topic",
         "weekly"
@@ -161,6 +162,11 @@
     {
       "method": "POST",
       "path": "/api/v1/news/items/{item_id}/text",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/news/sections",
       "query": []
     },
     {
@@ -732,6 +738,12 @@
       "publisher": true,
       "title": true,
       "url": true
+    },
+    "news_section": {
+      "count": true,
+      "name": true,
+      "topic": true,
+      "top": "news_item[]"
     },
     "news_digest": {
       "top": "news_item[]",
