@@ -348,7 +348,9 @@ def topic_out(t: NewsTopic, counts: dict[str, int] | None = None) -> dict[str, A
     }
 
 
-def source_out(s: NewsSource) -> dict[str, Any]:
+def source_out(s: NewsSource, last_item_at: datetime | None = None) -> dict[str, Any]:
+    """`last_item_at` (API 20): when the feed's newest story arrived (the feed detail's
+    "Last story"); null without one."""
     return {
         "id": s.id,
         "topic": s.topic_id,
@@ -367,6 +369,7 @@ def source_out(s: NewsSource) -> dict[str, Any]:
         "last_items": s.last_items,
         "last_new": s.last_new,
         "errors_in_row": s.errors_in_row,
+        "last_item_at": _iso(last_item_at),
     }
 
 
@@ -1897,8 +1900,9 @@ class NewsService:
 
     async def sources(self) -> list[dict[str, Any]]:
         async with self._sm() as s:
-            rows = (await s.execute(select(NewsSource).order_by(NewsSource.id))).scalars()
-            return [source_out(r) for r in rows]
+            rows = list((await s.execute(select(NewsSource).order_by(NewsSource.id))).scalars())
+            last = await _last_items(s)
+            return [source_out(r, last.get(r.id)) for r in rows]
 
     async def settings(self) -> dict[str, Any]:
         async with self._sm() as s:
@@ -1977,7 +1981,7 @@ class NewsService:
                     .values(topic_id=src["topic_id"])
                 )
             await s.commit()
-            out = source_out(row)
+            out = source_out(row, (await _last_items(s, source_id)).get(source_id))
         await self.write_sources()
         return out
 
@@ -2120,6 +2124,17 @@ def _write_file(tmp: Path, path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+async def _last_items(s: AsyncSession, source_id: str | None = None) -> dict[str, datetime]:
+    """Each feed's newest story (`seen_at`), by feed id; [source_id]: only that one."""
+    q = select(NewsItem.source_id, func.max(NewsItem.seen_at)).where(
+        NewsItem.source_id.is_not(None)
+    )
+    if source_id is not None:
+        q = q.where(NewsItem.source_id == source_id)
+    rows = (await s.execute(q.group_by(NewsItem.source_id))).all()
+    return {sid: at for sid, at in rows if sid is not None and at is not None}
 
 
 def _by_rank() -> tuple[Any, ...]:

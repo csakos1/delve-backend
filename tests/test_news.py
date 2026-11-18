@@ -553,10 +553,15 @@ async def test_topics_and_sources(env_: Env) -> None:
     with pytest.raises(NewsError):
         await env_.svc.create_source({"url": "https://z.example/rss", "topic": "nope"})
     assert "s.example-rss" in [s["id"] for s in env_.sources_file()["sources"]]
+    assert src["last_item_at"] is None
     env_.drop(batch([item(1, "s.example-rss")]))
     await env_.svc.ingest()
+    # the feed's newest story (API 20): in the list and in an update's answer
+    last = {s["id"]: s["last_item_at"] for s in await env_.svc.sources()}
+    assert last["s.example-rss"] == NOW.isoformat() and last["t-news"] is None
     # moving a feed moves its stories; deleting a topic deletes its feeds, the stories stay
-    await env_.svc.update_source("s.example-rss", {"topic": "tech", "every_min": 240})
+    moved = await env_.svc.update_source("s.example-rss", {"topic": "tech", "every_min": 240})
+    assert moved["last_item_at"] == NOW.isoformat()
     assert (await env_.rows())[0].topic_id == "tech"
     await env_.svc.update_source("s.example-rss", {"topic": "sailing"})
     await env_.svc.update_topic("sailing", {"name": "Sailboats", "enabled": False})

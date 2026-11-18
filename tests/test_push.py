@@ -441,6 +441,10 @@ async def test_a_news_story_is_pushed_to_who_asked(rig: Rig) -> None:
                         url="https://x.example/a", publisher="Pub", seen_at=datetime.now(UTC),
                         norm_title="a big launch", score=9, why="Nagy bejelentés.")  # fmt: skip
         s.add(item)
+        await s.flush()
+        s.add(NewsItem(key="d" * 32, topic_id="tech", kind="feed", title="A big launch, too",
+                       url="https://y.example/a", publisher="Other", seen_at=datetime.now(UTC),
+                       norm_title="a big launch too", dup_of=item.id))  # fmt: skip
         await s.commit()
         item_id = item.id
     rig.push.news(item_id)
@@ -459,6 +463,7 @@ async def test_a_news_story_is_pushed_to_who_asked(rig: Rig) -> None:
     assert msg["data"] == {
         "kind": "news", "item": str(item_id), "title": "A big launch", "publisher": "Pub",
         "topic": "Tech", "why": "Nagy bejelentés.", "url": "https://x.example/a", "score": "9",
+        "sources": "2",
     }  # fmt: skip
     assert ("news", str(item_id), True) in await rig.log()
 

@@ -1,5 +1,5 @@
 {
-  "api_revision": 19,
+  "api_revision": 20,
   "rest": [
     {
       "method": "GET",
@@ -777,6 +777,7 @@
       "last_error": true,
       "last_error_code": true,
       "last_http": true,
+      "last_item_at": true,
       "last_items": true,
       "last_new": true,
       "last_ok_at": true,

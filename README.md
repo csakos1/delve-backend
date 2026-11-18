@@ -41,7 +41,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
 | 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
 | 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
-| 20 | News for the app (N2, API 17-19): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more | done |
+| 20 | News for the app (N2, API 17-20): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more; a feed's newest story and a pushed story's number of sources for News settings and the notification (API 20) | done |
 
 ## Development
 
@@ -173,7 +173,7 @@ the desktop agent's instead.
 | `POST` | `/api/v1/news/topics` | `{id, name, description?, position?, enabled?}` → 201 `news_topic`; 409 `news_topic_exists`, `too_many_topics` |
 | `PATCH` | `/api/v1/news/topics/{id}` | `{name?, description?, position?, enabled?}` → `news_topic` |
 | `DELETE` | `/api/v1/news/topics/{id}` | 204; its feeds go too, its stories stay without a topic |
-| `GET` | `/api/v1/news/sources` | `{data: [news_source]}`: the feeds and what each answered last |
+| `GET` | `/api/v1/news/sources` | `{data: [news_source]}`: the feeds and what each answered last; `last_item_at` (API 20): when its newest story arrived |
 | `POST` | `/api/v1/news/sources` | `{url, topic, id?, kind?, window_h?, every_min?, enabled?}` → 201 `news_source`; 409 `news_source_exists`, `too_many_sources` |
 | `PATCH` | `/api/v1/news/sources/{id}` | `{enabled?, topic?, window_h?, every_min?}` → `news_source` ("Hide this source": `enabled: false`) |
 | `DELETE` | `/api/v1/news/sources/{id}` | 204 |
@@ -503,7 +503,7 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 | `card` | `card_id, type` (`water`), `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
 | `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, late_by_s, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
 | `watch` | `change` (`hit`/`available`), `slug, name, item` (the `watch_item` id), `item_id, title` (≤ 120), `price, reason` (≤ 240), `url, reserved` (`true`/`false`) | a watcher's hit, and a reserved hit that became available, to devices with `notify.watches` (on by default); high priority, collapse key `watch:<slug>:<item_id>`, TTL 24 h |
-| `news` | `item` (the `news_item` id), `title` (≤ 120), `publisher, topic` (its name), `why` (≤ 240), `url, score` | a must-read story (see "News"), to devices with `notify.news` (off by default until N2); high priority, collapse key `news:<item>`, TTL 12 h |
+| `news` | `item` (the `news_item` id), `title` (≤ 120), `publisher, topic` (its name), `why` (≤ 240), `url, score`, `sources` (the number of its sources, itself included; API 20) | a must-read story (see "News"), to devices with `notify.news` (off by default; the app's Settings → Notifications → News); high priority, collapse key `news:<item>`, TTL 12 h |
 | `system` | `event` (`switch_failed`/`switch_down`), `to`, `back` (model names as shown; `back` empty when there was nothing to go back to), `at` | a model switch that did not work: the previous model is loaded again (`switch_failed`) or llama-server is not running (`switch_down`), to devices with `notify.system` (on by default); high priority, collapse key `llama-switch`, TTL 6 h |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
@@ -691,7 +691,8 @@ Without the helper or the job it waits for the hourly run (`text_now` false).
 
 **Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
 most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to
-the devices with `notify.news`, which is off until the app has its channel (N2).
+the devices with `notify.news` (off until switched on in the app's Settings → Notifications;
+the app shows it on its own "News" channel with Save and Open).
 
 **What the operator reads is personal** - the topics with their descriptions (what the
 model will score against), the feeds, and `setup` (a line about his own machines, for

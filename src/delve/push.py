@@ -23,7 +23,8 @@ Kinds (every value is a string, as FCM requires):
   `severity, date, uptime_s, updates_count, open_incidents, llama_state, level_cm,
   lake_avg_cm`. Not for cards older than an hour (history on first ingest). Water goes to
   devices with `notify.water`, the brief to those with `notify.brief`.
-* `news` (N1b) - a must-read story: `item, title, publisher, topic, why, url, score`. At most
+* `news` (N1b) - a must-read story: `item, title, publisher, topic, why, url, score`,
+  `sources` (API 20: the story's sources, itself included). At most
   `push_max` a day, never between 22:00 and the digest time (the NewsService decides);
   to devices with `notify.news` (off until the app has its channel, N2).
 
@@ -57,7 +58,7 @@ from typing import Any
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.db.models import (
@@ -606,6 +607,14 @@ class PushService:
         async with self._sm() as s:
             item = await s.get(NewsItem, int(ref))
             topic = await s.get(NewsTopic, item.topic_id) if item and item.topic_id else None
+            # the story's other sources (merged items) and itself: "7 sources" (API 20)
+            others = (
+                await s.scalar(
+                    select(func.count()).select_from(NewsItem).where(NewsItem.dup_of == item.id)
+                )
+                if item is not None
+                else 0
+            )
         if item is None:
             return
         data = {
@@ -617,6 +626,7 @@ class PushService:
             "why": clip(item.why, WATCH_REASON_CHARS),
             "url": item.url,
             "score": _text(item.score),
+            "sources": str(1 + int(others or 0)),
         }
         await self._send(
             "news", "news", ref, data, high=True, ttl_s=NEWS_TTL_S, collapse_key=f"news:{ref}"
