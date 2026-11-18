@@ -80,8 +80,9 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     "schedule.deleted": frozenset({"id"}),
     "watch.updated": _WATCH,
     "watch.item": _WATCH_ITEM,
-    # N1: a collector batch brought new stories (the app re-reads GET /api/v1/news)
-    "news.updated": frozenset({"new", "updated_at"}),
+    # N1: a collector batch brought new stories (the app re-reads GET /api/v1/news);
+    # texts (N1c, API 16): how many article texts arrived
+    "news.updated": frozenset({"new", "texts", "updated_at"}),
     "error": frozenset({"code", "message", "ref_id"}),
 }
 

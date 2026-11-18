@@ -40,7 +40,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 16 | Personal profile: a core in every agent run's instructions and topic files the agent reads on demand, kept per conversation; read and edited by the app; the part marked for the General chats | done |
 | 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
 | 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
-| 19 | News (N1c): article text (robots, Google News links through the renderer) and Hungarian summaries | next |
+| 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
 
 ## Development
 
@@ -206,7 +206,7 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
 `health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`),
-`watch.updated`, `watch.item`, `news.updated` (`{new, updated_at}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`watch.updated`, `watch.item`, `news.updated` (`{new, texts, updated_at}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -601,6 +601,8 @@ hands the new items back as batch files. The two meet in two places:
 |---|---|---|
 | `DELVE_NEWS_DIR/sources.json` (`/var/lib/delve-news`, 2750 `delve:agent`) | the backend, whenever a topic or feed changes and hourly | `{v: 1, sources: [{id, url, kind, window_h, every_min}]}`: the enabled feeds of the enabled topics |
 | `DELVE_NEWS_BATCH_DIR/batch-*.json` (the agent's `~/.hermes/cards/news`, read-only here) | the collector, one per run (it removes them after 3 days) | `{v: 1, at, sources: [{id, status, http, items, new, error_code, error}], items: [{key, source, url, title, publisher, published, summary, gn, kind}]}` |
+| `DELVE_NEWS_DIR/wanted.json` (N1c) | the backend, when the list changes | `{v: 1, items: [{id, url, gn, try}]}`: the stories it wants the article of |
+| `DELVE_NEWS_BATCH_DIR/text-*.json` (N1c) | the `news-text` job, one per run | `{v: 1, at, run_s, items: [{id, try, status, url, final_url, text, chars, via, error}]}` |
 
 Every `DELVE_NEWS_POLL_S` the batches not read yet are taken in (each once,
 `news_batches`; a broken one is recorded with its error and never retried). An item of a
@@ -619,7 +621,7 @@ times in a row. Stories older than `DELVE_NEWS_RETENTION_DAYS` go, saved ones st
 first, then the newest - one per topic while other topics have one to show), `new` (how many unread there are), `updated_at` (the last batch),
 `state` (`empty` before the first batch, else `ok`), `sources`, `failing`, `weekly`
 (`{count}` on Mondays from `digest_at` on - the Dashboard's "Last week" row - else null).
-`summary_hu` stays null until N1c.
+`summary_hu` is null until the story has a text and its summary.
 
 **The model steps (N1b)** run between runs (`RunManager.side_work`, after a watcher's
 verdict) with direct llama calls - no tools, no thinking, the items marked as data - and
@@ -646,6 +648,9 @@ did not move (our own requests do not count). One step at a time, the first that
 3. **why** - up to 5 stories scored 5 or more after grouping, best first: the topic, a
    Hungarian "why" of at most 12 words, and `setup` (a release row is always `true`: the
    reader's own tools).
+4. **summary** (N1c) - one story with its article text, the saved ones first, then the
+   best: a Hungarian summary of 2-3 sentences from the first ~6000 characters, facts from
+   the text only (`summary_hu`; the app marks it "AI summary"). Two tries.
 
 A failed call (llama down, no usable line) counts a try and pauses the steps for a minute.
 A step that waits for llama (in use, or unavailable) logs `news waiting` after half an hour
@@ -660,6 +665,22 @@ of the last 48 hours: the items with another title leave it (those with the same
 stay together), and the story and the new ones go through the three steps again. The
 same headline in several feeds stays one story. A piece of a title must match exactly one
 story; if more match, they are listed with their ids.
+
+**Article texts (N1c, API 16)** - which stories, and how (delve-infra D-59): every poll
+the backend queues (`text_state: queued`, `text_try` + 1) the lead stories without a text
+state that deserve one - the best three of each topic of the last 24 hours and every 9
+(once grouped and explained, score 5 or more), the saved ones, and the ones the user asks
+for with `POST /api/v1/news/items/{id}/text` ("Fetch text") - and writes the queued ones
+(at most 40: asked, saved, best first) to `wanted.json` when the list changed. The agent's
+`news-text` job (hourly, :47) opens a Google News link in its browser only up to the
+publisher's address, reads robots.txt with the `delve-news` token, fetches the page and
+extracts the text, and answers with a `text-*.json`. An answer counts for the try it was
+asked for: `ok` with at least 500 characters is the text (`text`, `text_url` - the
+publisher's address, shown as `original_url`), anything else `failed` with the job's
+status in `text_error` (`robots`, `no_text`, `unresolved`, `http_403`, ...). A story queued
+for 26 hours without an answer fails with `timeout`. "Fetch text" queues a failed story
+again (a new try); a story with its text stays as it is; a day of releases has no article
+(409).
 
 **Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
 most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to

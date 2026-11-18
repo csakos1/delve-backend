@@ -1,5 +1,5 @@
 {
-  "api_revision": 15,
+  "api_revision": 16,
   "rest": [
     {
       "method": "GET",
@@ -156,6 +156,11 @@
     {
       "method": "PATCH",
       "path": "/api/v1/news/items/{item_id}",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/news/items/{item_id}/text",
       "query": []
     },
     {
@@ -671,6 +676,7 @@
       "gn": true,
       "id": true,
       "kind": true,
+      "original_url": true,
       "published_at": true,
       "publisher": true,
       "read": true,
@@ -682,6 +688,7 @@
       "source": true,
       "sources": true,
       "summary_hu": true,
+      "text_state": true,
       "title": true,
       "topic": true,
       "url": true,
@@ -698,6 +705,7 @@
       "gn": true,
       "id": true,
       "kind": true,
+      "original_url": true,
       "published_at": true,
       "publisher": true,
       "read": true,
@@ -709,12 +717,14 @@
       "source": true,
       "sources": true,
       "summary_hu": true,
+      "text_state": true,
       "title": true,
       "topic": true,
       "url": true,
       "why": true,
       "others": "news_other[]",
-      "text": "string|null"
+      "text": "string|null",
+      "text_error": "string|null"
     },
     "news_other": {
       "id": true,
@@ -944,6 +954,7 @@
       ],
       "news.updated": [
         "new",
+        "texts",
         "updated_at"
       ],
       "reasoning.final": [

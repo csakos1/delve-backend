@@ -25,6 +25,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy import text as sql_text  # NewsItem has a `text` column
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -560,7 +561,7 @@ class NewsItem(Base):
     """One news item (N1): a feed entry the collector found, or one day's releases of a
     `release` source merged into one row. `dup_of` points to the first item with the same
     title (another source of the same story); the lists show the first one only. The model's
-    fields (score .. summary_hu) are filled in N1b."""
+    fields (score .. summary_hu) are filled in N1b, the article's text in N1c."""
 
     __tablename__ = "news_items"
 
@@ -597,6 +598,18 @@ class NewsItem(Base):
     why_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     grouped_at: Mapped[datetime | None] = mapped_column(TZ)
     pushed_at: Mapped[datetime | None] = mapped_column(TZ)
+    # N1c: the article's text (the agent's collector fetches it when the story is wanted):
+    # text_state queued (in wanted.json, try text_try) | ok | failed (text_error: the
+    # collector's status); text_url the publisher's address (a Google News link resolved);
+    # text_at when it was queued or answered; text_requested_at the user asked for it
+    text: Mapped[str | None] = mapped_column(Text)
+    text_state: Mapped[str | None] = mapped_column(Text)
+    text_error: Mapped[str | None] = mapped_column(Text)
+    text_url: Mapped[str | None] = mapped_column(Text)
+    text_at: Mapped[datetime | None] = mapped_column(TZ)
+    text_try: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    text_requested_at: Mapped[datetime | None] = mapped_column(TZ)
+    summary_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     read_at: Mapped[datetime | None] = mapped_column(TZ)
     saved_at: Mapped[datetime | None] = mapped_column(TZ)
     feedback: Mapped[str | None] = mapped_column(Text)
@@ -606,7 +619,15 @@ class NewsItem(Base):
     __table_args__ = (
         CheckConstraint("kind IN ('feed','release')", name="kind"),
         CheckConstraint("feedback IN ('more','less')", name="feedback"),
-        Index("ix_news_items_lead", text("id DESC"), postgresql_where=text("dup_of IS NULL")),
+        CheckConstraint("text_state IN ('queued','ok','failed')", name="text_state"),
+        Index(
+            "ix_news_items_text_state",
+            "text_state",
+            postgresql_where=sql_text("text_state IS NOT NULL"),
+        ),
+        Index(
+            "ix_news_items_lead", sql_text("id DESC"), postgresql_where=sql_text("dup_of IS NULL")
+        ),
         Index("ix_news_items_dup_of", "dup_of"),
         Index("ix_news_items_norm_title", "norm_title"),
     )

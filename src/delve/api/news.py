@@ -1,5 +1,6 @@
 """REST for News (N1, `delve.news`): the Dashboard block, the items by topic, one story
-with its other sources, read / saved / feedback, and the topics, feeds and settings.
+with its other sources and its article (N1c), read / saved / feedback, "Fetch text", and
+the topics, feeds and settings.
 
 The bodies are checked by the service (the same rules as `delve-backend news import`);
 a refusal is `{code, message}` with 404, 409 or 422."""
@@ -64,6 +65,19 @@ async def news_item(
     """One story with its other sources (`others`); a duplicate's id opens its story."""
     try:
         return await _svc(request).item(item_id)
+    except NewsError as exc:
+        raise _refused(exc) from exc
+
+
+@router.post("/news/items/{item_id}/text")
+async def fetch_news_text(
+    request: Request, _device: Device, item_id: Annotated[int, Path(ge=1)]
+) -> dict[str, Any]:
+    """ "Fetch text" (N1c): the story's article is queued for the collector's next run (at
+    most an hour; a failed one is tried again) -> the story (`text_state: queued`). A story
+    that has its text is returned as it is; a day of releases has none (409)."""
+    try:
+        return await _svc(request).request_text(item_id)
     except NewsError as exc:
         raise _refused(exc) from exc
 

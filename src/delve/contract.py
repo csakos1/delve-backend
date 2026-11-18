@@ -169,16 +169,22 @@ def shapes() -> dict[str, Any]:
         "persona_topic": _keys(topic_out(Topic("n", "t", "s", "x"))),
         # N1: GET /api/v1/news/items (and each `top` of GET /api/v1/news); kind: feed|release;
         # sources: how many feeds carried the story; releases: null, or [{tag, url,
-        # published_at}] for a release row; score .. summary_hu: null until N1b;
+        # published_at}] for a release row; score .. summary_hu: null until scored /
+        # summarised; text_state: null|queued|ok|failed (N1c, API 16); original_url: the
+        # publisher's address once a Google News link is resolved, else url;
         # feedback: more|less|null
         "news_item": {**_keys(news_item_out(nitem)), "releases": "news_release[]|null"},
         "news_release": _keys({"tag": "t", "url": "u", "published_at": "p"}),
-        # N1: GET /api/v1/news/items/{id} and its PATCH (text: null until N1b)
+        # N1: GET /api/v1/news/items/{id}, its PATCH and POST .../text (N1c, API 16): text
+        # the extracted article (paragraphs split by blank lines) when text_state is ok;
+        # text_error the collector's reason when failed (robots, no_text, unresolved,
+        # http_403, timeout, ...)
         "news_story": {
             **_keys(news_item_out(nitem)),
             "releases": "news_release[]|null",
             "others": "news_other[]",
             "text": "string|null",
+            "text_error": "string|null",
         },
         "news_other": _keys(news_other_out(nitem)),
         # N1: GET /api/v1/news (state: empty|ok)

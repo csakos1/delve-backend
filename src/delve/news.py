@@ -15,7 +15,14 @@ folded title another lead item of the last 72 hours already has is stored as its
 duplicate (`dup_of`: another source of the same story); the lists show the lead only, with
 the number of sources. The releases of a `release` feed are merged into one row per
 source and day ("llama.cpp: 10 releases (b12468 - b12477)"). Scoring, grouping across
-languages and the Hungarian summaries are N1b; until then the lists are newest first.
+languages and the Hungarian "why" are N1b.
+
+Article texts (N1c): the backend lists the stories worth a text in `wanted.json` next to
+`sources.json` (the best three of each topic of the last day, every 9, the saved ones, the
+ones the user asks for; each with a `try`); the agent's `news-text` job opens the Google
+News links in its browser up to the publisher, reads robots.txt, fetches and extracts the
+text, and hands it back as `text-*.json` beside the batches. A story with enough text gets
+a Hungarian summary from llama in the same idle time as the other steps.
 
 What the operator reads - topics, feeds, the line about his own setup - is personal: it is
 imported (`delve-backend news import`) or edited in the app, and is in no repository.
@@ -55,8 +62,10 @@ from delve.news_model import (
     group_body,
     parse_groups,
     parse_scores,
+    parse_summary,
     parse_whys,
     score_body,
+    summary_body,
     system_prompt,
     why_body,
 )
@@ -67,7 +76,7 @@ TZ = ZoneInfo("Europe/Budapest")
 TOPIC_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,47}$")
 KEY_RE = re.compile(r"^[0-9a-f]{32}$")
-BATCH_NAME_RE = re.compile(r"^batch-\d{8}T\d{6}Z-\d+\.json$")
+BATCH_NAME_RE = re.compile(r"^(batch|text)-\d{8}T\d{6}Z-\d+\.json$")  # text: N1c
 HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 KINDS = ("feed", "release")
 FEEDBACK = ("more", "less")
@@ -114,6 +123,16 @@ WEEKLY_MIN_SCORE = 5
 RELEASE_SCORE = 6  # a day of releases is good to know, not a must-read: a rule, not llama
 WAIT_LOG_S = 1800.0  # a News step that waits for llama says so this often (N342)
 RESCORE_MAX_HOURS = 48  # = SCORE_WINDOW: older stories would not be scored again
+# N1c: article texts and summaries
+TEXT_TOP_PER_TOPIC = 3  # the best of each topic of the last day get a text
+TEXT_MIN_SCORE = 5
+TEXT_WANTED_MAX = 40  # in wanted.json (the collector asks at most this many a run)
+TEXT_QUEUE_MAX = timedelta(hours=26)  # queued longer: the collector did not answer
+TEXT_CHARS = 30_000
+TEXT_MIN_CHARS = 500  # less is no text (a script-built page, a bot check)
+MAX_TEXT_RESULTS = 200
+SUMMARY_MAX_ATTEMPTS = 2
+STATUS_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 SETTINGS_KEY = "news"
 DEFAULT_SETTINGS: dict[str, Any] = {"setup": "", "digest_at": "07:00", "push": True,
                                     "push_max": 2}  # fmt: skip
@@ -295,6 +314,8 @@ def item_out(i: NewsItem, sources: int = 1) -> dict[str, Any]:
         "why": i.why,
         "setup": i.setup,
         "summary_hu": i.summary_hu,
+        "text_state": i.text_state,
+        "original_url": i.text_url or i.url,
         "read": i.read_at is not None,
         "saved": i.saved_at is not None,
         "feedback": i.feedback,
@@ -579,6 +600,48 @@ def _batch_item(it: Any) -> BatchItem:
 # --- the service ----------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class TextResult:
+    id: int
+    attempt: int
+    status: str
+    text: str | None
+    final_url: str | None
+
+
+def parse_texts(raw: bytes) -> tuple[datetime, list[TextResult]]:
+    """A `text-*.json` of the collector (N1c) -> (when, results); InvalidBatch if it is not
+    one. A bad entry is left out; the text is the extracted article, kept as data."""
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise InvalidBatch(f"not JSON: {exc}") from None
+    if not isinstance(data, dict) or data.get("v") != 1 or not isinstance(data.get("items"), list):
+        raise InvalidBatch('expected {"v": 1, "items": [...]}')
+    at = _parse_ts(data.get("at"))
+    if at is None:
+        raise InvalidBatch("no time")
+    out: list[TextResult] = []
+    for it in data["items"][:MAX_TEXT_RESULTS]:
+        if not isinstance(it, dict):
+            continue
+        iid, attempt, status = it.get("id"), it.get("try"), it.get("status")
+        if not isinstance(iid, int) or isinstance(iid, bool) or not isinstance(attempt, int) \
+                or isinstance(attempt, bool):  # fmt: skip
+            continue
+        if not isinstance(status, str) or not STATUS_RE.match(status):
+            status = "failed"
+        text = it.get("text")
+        text = text.replace("\x00", "").strip()[:TEXT_CHARS] if isinstance(text, str) else None
+        url = it.get("final_url")
+        try:
+            url = check_url(url) if url is not None else None
+        except NewsError:
+            url = None
+        out.append(TextResult(iid, attempt, status, text or None, url))
+    return at, out
+
+
 class NewsService:
     def __init__(
         self,
@@ -617,6 +680,7 @@ class NewsService:
         self._wait_reason = "in use"
         self._waiting_since: float | None = None  # a step is due, llama is not free
         self._wait_logged = 0.0
+        self._wanted_last: str | None = None  # the items of the last wanted.json written
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -637,6 +701,7 @@ class NewsService:
         while True:
             try:
                 await self.ingest()
+                await self.refresh_wanted()
                 await self.push_due()
                 if time.monotonic() >= next_cleanup:
                     await self.cleanup()
@@ -695,14 +760,173 @@ class NewsService:
                         await s.execute(select(NewsBatch.name).where(NewsBatch.name.in_(names)))
                     ).scalars()
                 )
-            total = 0
+            total = texts = 0
             for name in names:
                 if name in known:
                     continue
-                total += await self._ingest_file(name)
-        if total:
-            self._hub.publish("news.updated", {"new": total, "updated_at": _iso(self._clock())})
+                if name.startswith("text-"):
+                    texts += await self._ingest_texts(name)
+                else:
+                    total += await self._ingest_file(name)
+        if total or texts:
+            self._hub.publish(
+                "news.updated", {"new": total, "texts": texts, "updated_at": _iso(self._clock())}
+            )
         return total
+
+    async def _ingest_texts(self, name: str) -> int:
+        """A texts file: each answer for the try it was asked for (a later try or a story
+        that is no longer queued ignores it); the number of new texts."""
+        path = self._batch_dir / name
+        try:
+            raw = await asyncio.to_thread(_read_capped, path, MAX_BATCH_BYTES)
+            at, results = parse_texts(raw)
+        except (OSError, InvalidBatch) as exc:
+            async with self._sm() as s:
+                await s.execute(
+                    insert(NewsBatch)
+                    .values(name=name, error=str(exc)[:200])
+                    .on_conflict_do_nothing(index_elements=["name"])
+                )
+                await s.commit()
+            log.warning("news texts refused", extra={"file": name, "error": str(exc)[:200]})
+            return 0
+        now = self._clock()
+        ok = failed = 0
+        async with self._sm() as s:
+            for r in results:
+                row = await s.get(NewsItem, r.id, with_for_update=True)
+                if row is None or row.text_state != "queued" or row.text_try != r.attempt:
+                    continue
+                row.text_at, row.text_requested_at = now, None
+                if r.final_url:
+                    row.text_url = r.final_url
+                if r.status == "ok" and r.text and len(r.text) >= TEXT_MIN_CHARS:
+                    row.text, row.text_state, row.text_error = r.text, "ok", None
+                    row.summary_hu, row.summary_attempts = None, 0
+                    ok += 1
+                else:
+                    row.text_state = "failed"
+                    row.text_error = r.status if r.status != "ok" else "no_text"
+                    failed += 1
+            s.add(NewsBatch(name=name, at=at, items=len(results), new=ok))
+            await s.commit()
+        log.info("news texts read", extra={"file": name, "ok": ok, "failed": failed})
+        return ok
+
+    # --- article texts (N1c) ---------------------------------------------------------------
+
+    async def refresh_wanted(self) -> bool:
+        """Queue the stories worth a text and write `wanted.json` when its list changed.
+        True if written."""
+        now = self._clock()
+        async with self._sm() as s:
+            await s.execute(
+                update(NewsItem)
+                .where(NewsItem.text_state == "queued", NewsItem.text_at < now - TEXT_QUEUE_MAX)
+                .values(text_state="failed", text_error="timeout", text_requested_at=None)
+            )
+            pick = await self._text_picks(s, now)
+            if pick:
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id.in_(pick), NewsItem.text_state.is_(None))
+                    .values(text_state="queued", text_at=now, text_error=None,
+                            text_try=NewsItem.text_try + 1)
+                )  # fmt: skip
+            rows = (
+                await s.execute(
+                    select(NewsItem.id, NewsItem.url, NewsItem.gn, NewsItem.text_try)
+                    .where(NewsItem.text_state == "queued")
+                    .order_by(
+                        NewsItem.text_requested_at.desc().nulls_last(),
+                        NewsItem.saved_at.desc().nulls_last(),
+                        NewsItem.score.desc().nulls_last(),
+                        NewsItem.id.desc(),
+                    )
+                    .limit(TEXT_WANTED_MAX)
+                )
+            ).all()
+            await s.commit()
+        items = [{"id": r.id, "url": r.url, "gn": r.gn, "try": r.text_try} for r in rows]
+        key = json.dumps(items)
+        if key == self._wanted_last:
+            return False
+        data = {"v": 1, "written_at": now.isoformat(), "items": items}
+        path = self._news_dir / "wanted.json"
+        tmp = self._news_dir / f".wanted.{os.getpid()}.part"
+        try:
+            await asyncio.to_thread(_write_file, tmp, path, json.dumps(data, indent=1) + "\n")
+        except OSError as exc:
+            log.warning("news wanted not written", extra={"error": type(exc).__name__})
+            return False
+        self._wanted_last = key
+        if items:
+            log.info("news wanted written", extra={"items": len(items)})
+        return True
+
+    async def _text_picks(self, s: AsyncSession, now: datetime) -> list[int]:
+        """The stories without a text state that deserve one: the best three of each topic
+        of the last day and every must-read (once grouped and explained), the saved ones,
+        the ones the user asked for."""
+        rows = (
+            await s.execute(
+                select(NewsItem.id, NewsItem.topic_id, NewsItem.score, NewsItem.text_state)
+                .outerjoin(NewsSource, NewsSource.id == NewsItem.source_id)
+                .outerjoin(NewsTopic, NewsTopic.id == NewsItem.topic_id)
+                .where(
+                    self._visible(),
+                    NewsItem.kind == "feed",
+                    NewsItem.seen_at >= now - DIGEST_WINDOW,
+                    NewsItem.score >= TEXT_MIN_SCORE,
+                    NewsItem.why.is_not(None),
+                )
+                .order_by(NewsItem.score.desc(), NewsItem.id.desc())
+                .limit(GROUP_POOL_MAX)
+            )
+        ).all()
+        seen: Counter[str | None] = Counter()
+        pick: list[int] = []
+        for r in rows:
+            top = seen[r.topic_id] < TEXT_TOP_PER_TOPIC
+            seen[r.topic_id] += 1
+            if (top or r.score >= PUSH_MIN_SCORE) and r.text_state is None:
+                pick.append(r.id)
+        asked = and_(NewsItem.kind == "feed", NewsItem.text_state.is_(None))
+        pick += (
+            await s.execute(
+                select(NewsItem.id).where(
+                    asked,
+                    or_(
+                        NewsItem.text_requested_at.is_not(None),
+                        and_(NewsItem.saved_at.is_not(None), NewsItem.dup_of.is_(None)),
+                    ),
+                )
+            )
+        ).scalars()
+        return sorted(set(pick))
+
+    async def request_text(self, item_id: int) -> dict[str, Any]:
+        """The user asks for a story's text ("Fetch text"): queued for the collector's next
+        run (a failed one is tried again); the story."""
+        now = self._clock()
+        async with self._sm() as s:
+            row = await s.get(NewsItem, item_id, with_for_update=True)
+            if row is None:
+                raise NewsError("news_item_not_found", "no such item", 404)
+            if row.dup_of is not None:
+                lead = await s.get(NewsItem, row.dup_of, with_for_update=True)
+                row = lead or row
+            if row.kind != "feed":
+                raise NewsError("news_no_text", "a day of releases has no article", 409)
+            if row.text_state in (None, "failed"):
+                row.text_state, row.text_requested_at = None, now
+            elif row.text_state == "queued":
+                row.text_requested_at = row.text_requested_at or now
+            await s.commit()
+            lead_id = row.id
+        await self.refresh_wanted()
+        return await self.item(lead_id)
 
     async def _ingest_file(self, name: str) -> int:
         path = self._batch_dir / name
@@ -828,7 +1052,8 @@ class NewsService:
 
     async def work(self) -> bool:
         """One model step between runs (`RunManager.side_work`, after the watchers): a batch
-        of scores, a grouping, or a batch of Hungarian whys. True if llama was asked
+        of scores, a grouping, a batch of Hungarian whys, or one summary of an article
+        (N1c). True if llama was asked
         (the worker looks at its queue again before the next step)."""
         if self._llama is None or self._mono() < self._retry_at:
             return False
@@ -848,8 +1073,10 @@ class NewsService:
                 tokens = await self._score(rows)
             elif kind == "group":
                 tokens = await self._group(rows)
-            else:
+            elif kind == "why":
                 tokens = await self._why(rows)
+            else:
+                tokens = await self._summary(rows)
         except (LlamaUnavailable, ModelAnswerError) as exc:
             self._retry_at = self._mono() + FAIL_BACKOFF_S
             await self._step_failed(kind, rows)
@@ -987,6 +1214,27 @@ class NewsService:
         )
         if rows:
             return "why", rows
+        rows = list(
+            (
+                await s.execute(
+                    self._base()
+                    .where(
+                        live,
+                        NewsItem.text_state == "ok",
+                        NewsItem.summary_hu.is_(None),
+                        NewsItem.summary_attempts < SUMMARY_MAX_ATTEMPTS,
+                    )
+                    .order_by(
+                        NewsItem.saved_at.desc().nulls_last(),
+                        NewsItem.score.desc().nulls_last(),
+                        NewsItem.id.desc(),
+                    )
+                    .limit(1)
+                )
+            ).scalars()
+        )
+        if rows:
+            return "summary", rows
         return None
 
     async def _prompt(self) -> tuple[list[TopicRef], str]:
@@ -1102,6 +1350,17 @@ class NewsService:
             await s.commit()
         return tokens
 
+    async def _summary(self, rows: list[NewsItem]) -> dict[str, int]:
+        r = rows[0]
+        text, tokens = await self._ask(summary_body(r.title, r.publisher, r.text or ""))
+        summary = parse_summary(text)
+        async with self._sm() as s:
+            row = await s.get(NewsItem, r.id, with_for_update=True)
+            if row is not None and row.text_state == "ok":
+                row.summary_hu = summary
+            await s.commit()
+        return tokens
+
     async def _step_failed(self, kind: str, rows: list[NewsItem]) -> None:
         if kind == "group":
             return  # tried again at the next chance
@@ -1122,6 +1381,12 @@ class NewsService:
                         NewsItem.score_attempts >= SCORE_MAX_ATTEMPTS,
                     )
                     .values(score=0, scored_at=now)
+                )
+            elif kind == "summary":
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id.in_(ids))
+                    .values(summary_attempts=NewsItem.summary_attempts + 1)
                 )
             else:
                 await s.execute(
@@ -1445,7 +1710,8 @@ class NewsService:
             return {
                 **item_out(row, 1 + len(others)),
                 "others": [other_out(o) for o in others],
-                "text": None,
+                "text": row.text if row.text_state == "ok" else None,
+                "text_error": row.text_error if row.text_state == "failed" else None,
             }
 
     async def mark(self, item_id: int, raw: Any) -> dict[str, Any]:

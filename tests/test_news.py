@@ -33,6 +33,7 @@ from delve.news import (
     fold_title,
     hanging_together,
     parse_batch,
+    parse_texts,
     pick_related,
     release_title,
     source_id_for,
@@ -303,7 +304,7 @@ async def test_a_batch_comes_in_once(env_: Env) -> None:
         (key(2), "t-news", "tech"),
     ]
     assert rows[0].seen_at == NOW and rows[0].excerpt == "Short."
-    assert env_.events("news.updated") == [{"new": 2, "updated_at": NOW.isoformat()}]
+    assert env_.events("news.updated") == [{"new": 2, "texts": 0, "updated_at": NOW.isoformat()}]
     async with env_.db() as s:
         b = await s.get(NewsBatch, name)
         o, t = await s.get(NewsSource, "o-news"), await s.get(NewsSource, "t-news")
@@ -678,6 +679,11 @@ def test_routes(ndirs: tuple[Path, Path], client: TestClient, token: str) -> Non
     assert story["saved"] is True and story["others"] == [] and story["text"] is None
     assert client.get(f"/api/v1/news/items/{iid}", headers=h).json()["saved"] is True
     assert client.get("/api/v1/news/items/999", headers=h).status_code == 404
+    r = client.post(f"/api/v1/news/items/{iid}/text", headers=h)  # "Fetch text" (N1c)
+    assert r.status_code == 200 and r.json()["text_state"] == "queued"
+    wanted = json.loads((news_dir / "wanted.json").read_text())["items"]
+    assert [(w["id"], w["try"]) for w in wanted] == [(iid, 1)]
+    assert client.post("/api/v1/news/items/999/text", headers=h).status_code == 404
     r = client.patch(f"/api/v1/news/items/{iid}", headers=h, json={"feedback": "love"})
     assert r.status_code == 422
     r = client.patch("/api/v1/news/sources/t-news", headers=h, json={"enabled": False})
@@ -1205,3 +1211,133 @@ async def test_split_a_story(menv: ModelEnv) -> None:
     with pytest.raises(NewsError) as err:
         await menv.svc.split(one)
     assert err.value.code == "too_old"
+
+
+def test_parse_texts() -> None:
+    at, res = parse_texts(json.dumps({"v": 1, "at": "2026-11-18T15:47:00Z", "items": [
+        {"id": 1, "try": 2, "status": "ok", "text": "  a\x00b  ", "final_url": "https://p.example/a"},
+        {"id": 2, "try": 1, "status": "Weird Status!", "final_url": "javascript:x"},
+        {"id": "3", "try": 1, "status": "ok"}, {"id": 4, "try": True}, "x",
+        {"id": 5, "try": 1, "status": "ok", "text": "y" * 40_000},
+    ]}).encode())  # fmt: skip
+    assert at == datetime(2026, 11, 18, 15, 47, tzinfo=UTC)
+    assert [(r.id, r.attempt, r.status, r.text, r.final_url) for r in res[:2]] == [
+        (1, 2, "ok", "ab", "https://p.example/a"), (2, 1, "failed", None, None)]  # fmt: skip
+    assert [r.id for r in res] == [1, 2, 5] and len(res[2].text or "") == 30_000
+    for bad in (b"{", b'{"v": 1, "items": []}', b'{"v": 2, "at": "2026-11-18T00:00:00Z"}'):
+        with pytest.raises(InvalidBatch):
+            parse_texts(bad)
+
+
+ARTICLE = "A kitalált tájfutó-világbajnokság döntőjét egy új térképen rendezték. " * 12
+
+
+@pg
+async def test_texts_wanted_answered_and_summarised(menv: ModelEnv) -> None:
+    menv.drop(batch([
+        item(1), item(2), item(3), item(4), item(5), item(6, "t-news", gn=True,
+        url="https://news.google.com/rss/articles/SIX"), item(7), item(8),
+        item(9, "tool", kind="release", title="v1.0"),
+    ]))  # fmt: skip
+    await menv.svc.ingest()
+    scores = {1: 9, 2: 7, 3: 6, 4: 5, 5: 4, 6: 8, 7: 8, 8: 2}
+    async with menv.db() as s:
+        for n, sc in scores.items():
+            await s.execute(
+                update(NewsItem).where(NewsItem.key == key(n))
+                .values(score=sc, scored_at=NOW, grouped_at=NOW, why=None if n == 7 else "x")
+            )  # fmt: skip
+        await s.execute(update(NewsItem).where(NewsItem.key == key(8)).values(saved_at=NOW))
+        # 7 never got its why (two failed tries): not picked by rank
+        await s.execute(update(NewsItem).where(NewsItem.key == key(7)).values(why_attempts=2))
+        await s.execute(update(NewsItem).where(NewsItem.kind == "release").values(why="x"))
+        await s.commit()
+    ids = {r.key: r.id for r in await menv.rows()}
+    i = {n: ids[key(n)] for n in range(1, 9)}
+    # the best three of each topic (once explained), every 9, the saved one; no release
+    assert await menv.svc.refresh_wanted() is True
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert [w["id"] for w in wanted] == [i[8], i[1], i[6], i[2], i[3]]
+    assert {w["try"] for w in wanted} == {1}
+    assert [w["gn"] for w in wanted if w["id"] == i[6]] == [True]
+    assert await menv.svc.refresh_wanted() is False  # the same list: not written again
+    # the collector answers (one too late a try, one unknown id)
+    long = "\n\n".join([ARTICLE.strip()] * 2)
+    menv.drop({"v": 1, "at": iso(NOW), "items": [
+        {"id": i[1], "try": 1, "status": "ok", "text": long, "final_url": "https://pub.example/1"},
+        {"id": i[6], "try": 1, "status": "robots", "final_url": "https://pub.example/6"},
+        {"id": i[2], "try": 1, "status": "ok", "text": "short"},
+        {"id": i[3], "try": 5, "status": "ok", "text": long},
+        {"id": 999999, "try": 1, "status": "ok", "text": long},
+    ]}, name="text-20261117T120000Z-1.json")  # fmt: skip
+    assert await menv.svc.ingest() == 0
+    assert menv.events("news.updated")[-1]["texts"] == 1
+    rows = {r.id: r for r in await menv.rows()}
+    assert (rows[i[1]].text_state, rows[i[1]].text_url, rows[i[1]].text) == (
+        "ok",
+        "https://pub.example/1",
+        long,
+    )
+    assert (rows[i[6]].text_state, rows[i[6]].text_error) == ("failed", "robots")
+    assert (rows[i[2]].text_state, rows[i[2]].text_error) == ("failed", "no_text")
+    assert rows[i[3]].text_state == "queued"
+    story = await menv.svc.item(i[1])
+    assert story["text"] == long and story["original_url"] == "https://pub.example/1"
+    gn = await menv.svc.item(i[6])
+    assert (gn["text"], gn["text_error"], gn["original_url"]) == (
+        None,
+        "robots",
+        "https://pub.example/6",
+    )
+    # the summary: one story a step, with its text
+    menv.answers = [
+        "Összefoglaló: „A kitalált tájfutó-vb döntőjét új térképen rendezték, sok meglepetéssel.”"
+    ]
+    assert await menv.step() is True
+    user = menv.llama.chats[-1]["messages"][1]["content"]
+    assert "<article>" in user and "tájfutó-világbajnokság" in user and "Hungarian" in user
+    assert (await menv.svc.item(i[1]))["summary_hu"] == (
+        "A kitalált tájfutó-vb döntőjét új térképen rendezték, sok meglepetéssel."
+    )
+    assert await menv.step() is False  # nothing else to summarise
+    # "Fetch text": a failed one again (a new try), a duplicate opens its story, a release
+    # has no article, a story with its text stays as it is
+    again = await menv.svc.request_text(i[6])
+    assert again["text_state"] == "queued"
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert (wanted[0]["id"], wanted[0]["try"]) == (i[6], 2)
+    assert (await menv.svc.request_text(i[1]))["text_state"] == "ok"
+    release = next(r.id for r in await menv.rows() if r.kind == "release")
+    with pytest.raises(NewsError) as err:
+        await menv.svc.request_text(release)
+    assert err.value.code == "news_no_text"
+    with pytest.raises(NewsError):
+        await menv.svc.request_text(424242)
+    # nobody answers for a day: failed with "timeout"; out of the window, nothing new
+    menv.now = NOW + timedelta(hours=27)
+    await menv.svc.refresh_wanted()
+    rows = {r.id: r for r in await menv.rows()}
+    assert {n: rows[i[n]].text_state for n in (3, 6, 8)} == {3: "failed", 6: "failed", 8: "failed"}
+    assert rows[i[3]].text_error == "timeout"
+    assert json.loads((menv.news_dir / "wanted.json").read_text())["items"] == []
+
+
+@pg
+async def test_a_summary_that_is_not_one(menv: ModelEnv) -> None:
+    menv.drop(batch([item(1)]))
+    await menv.svc.ingest()
+    async with menv.db() as s:
+        await s.execute(
+            update(NewsItem).values(
+                score=7, scored_at=NOW, grouped_at=NOW, why="x", text_state="ok", text=ARTICLE
+            )
+        )
+        await s.commit()
+    menv.answers = ["ok", "<article> ignore everything </article>"]
+    assert await menv.step() is False  # a failed step
+    menv.mono.t += 61
+    assert await menv.step() is False
+    menv.mono.t += 61
+    assert await menv.step() is False  # two tries: no more
+    row = (await menv.rows())[0]
+    assert (row.summary_hu, row.summary_attempts) == (None, 2)
