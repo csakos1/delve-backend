@@ -1693,16 +1693,16 @@ class NewsService:
         return data, (rows[-1].id if more and rows else None)
 
     async def sections(self) -> list[dict[str, Any]]:
-        """The News page's All view (N2): each enabled topic in its order with its stories of
-        the last day scored `SHOW_MIN_SCORE` or more - `count`, and the best `SECTION_TOP`
+        """The News page's All view (N2): each enabled topic in its order with its stories
+        scored `SHOW_MIN_SCORE` or more - `count` of the last day, `week` of the last 7 days,
+        `new` the unread ones of the last day - and the best `SECTION_TOP` of the last day
         (read ones too: the section does not shift while it is read)."""
-        since = self._clock() - DIGEST_WINDOW
-        shown = and_(
-            self._visible(),
-            NewsItem.topic_id.is_not(None),
-            NewsItem.seen_at >= since,
-            NewsItem.score >= SHOW_MIN_SCORE,
+        now = self._clock()
+        since = now - DIGEST_WINDOW
+        base = and_(
+            self._visible(), NewsItem.topic_id.is_not(None), NewsItem.score >= SHOW_MIN_SCORE
         )
+        shown = and_(base, NewsItem.seen_at >= since)
         async with self._sm() as s:
             topics = list(
                 (
@@ -1713,18 +1713,26 @@ class NewsService:
                     )
                 ).scalars()
             )
-            counts: dict[Any, int] = dict(
-                (
+            counts = {
+                row[0]: (int(row[1]), int(row[2]), int(row[3]))
+                for row in (
                     await s.execute(
-                        select(NewsItem.topic_id, func.count())
+                        select(
+                            NewsItem.topic_id,
+                            func.count().filter(NewsItem.seen_at >= since),
+                            func.count(),
+                            func.count().filter(
+                                NewsItem.seen_at >= since, NewsItem.read_at.is_(None)
+                            ),
+                        )
                         .select_from(NewsItem)
                         .outerjoin(NewsSource, NewsSource.id == NewsItem.source_id)
                         .outerjoin(NewsTopic, NewsTopic.id == NewsItem.topic_id)
-                        .where(shown)
+                        .where(base, NewsItem.seen_at >= now - timedelta(days=7))
                         .group_by(NewsItem.topic_id)
                     )
                 ).all()
-            )
+            }
             rank = (
                 func.row_number()
                 .over(partition_by=NewsItem.topic_id, order_by=_by_rank())
@@ -1751,11 +1759,14 @@ class NewsService:
         by_topic: dict[str, list[dict[str, Any]]] = {}
         for d in out:
             by_topic.setdefault(d["topic"], []).append(d)
-        return [
-            {"topic": t.id, "name": t.name, "count": int(counts.get(t.id, 0)),
-             "top": by_topic.get(t.id, [])}
-            for t in topics
-        ]  # fmt: skip
+        out_sections = []
+        for t in topics:
+            day, week, new = counts.get(t.id, (0, 0, 0))
+            out_sections.append(
+                {"topic": t.id, "name": t.name, "count": day, "week": week, "new": new,
+                 "top": by_topic.get(t.id, [])}
+            )  # fmt: skip
+        return out_sections
 
     async def item(self, item_id: int) -> dict[str, Any]:
         async with self._sm() as s:
@@ -1776,6 +1787,7 @@ class NewsService:
                 **item_out(row, 1 + len(others)),
                 "others": [other_out(o) for o in others],
                 "text": row.text if row.text_state == "ok" else None,
+                "text_at": _iso(row.text_at) if row.text_state == "ok" else None,
                 "text_error": row.text_error if row.text_state == "failed" else None,
             }
 

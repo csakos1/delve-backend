@@ -62,9 +62,9 @@ async def news_items(
 
 @router.get("/news/sections")
 async def news_sections(request: Request, _device: Device) -> dict[str, Any]:
-    """The News page's All view (N2, API 17): `{data: [news_section]}` - each enabled topic
-    in its order, `count` (its stories of the last day scored 5 or more) and `top` (the best
-    3 of them, read ones too)."""
+    """The News page's All view (N2, API 17-18): `{data: [news_section]}` - each enabled
+    topic in its order; of its stories scored 5 or more `count` (last day), `week` (last 7
+    days), `new` (unread, last day), and `top` (the best 3 of the last day, read ones too)."""
     return {"data": await _svc(request).sections()}
 
 

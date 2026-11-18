@@ -1,5 +1,5 @@
 {
-  "api_revision": 17,
+  "api_revision": 18,
   "rest": [
     {
       "method": "GET",
@@ -730,6 +730,7 @@
       "why": true,
       "others": "news_other[]",
       "text": "string|null",
+      "text_at": "string|null",
       "text_error": "string|null"
     },
     "news_other": {
@@ -742,7 +743,9 @@
     "news_section": {
       "count": true,
       "name": true,
+      "new": true,
       "topic": true,
+      "week": true,
       "top": "news_item[]"
     },
     "news_digest": {

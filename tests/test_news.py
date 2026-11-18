@@ -501,11 +501,12 @@ async def test_the_sections_and_the_score_floor(env_: Env) -> None:
         await s.commit()
     await env_.svc.mark(t[key(2)].id, {"read": True})
     sec = await env_.svc.sections()
-    got = [(x["topic"], x["count"], [i["id"] for i in x["top"]]) for x in sec]
-    # orienteering: 2 (9, read - still there), 4 (7), 1 (6); 5 (4) and 6 (unscored) are out
+    got = [(x["topic"], x["count"], x["week"], x["new"], [i["id"] for i in x["top"]]) for x in sec]
+    # orienteering: 2 (9, read - still there), 4 (7), 1 (6); 5 (4) and 6 (unscored) are out;
+    # 3 (9, 30 hours ago) counts in the week only
     assert got == [
-        ("orienteering", 3, [t[key(2)].id, t[key(4)].id, t[key(1)].id]),
-        ("tech", 2, [t[key(7)].id, t[key(8)].id]),
+        ("orienteering", 3, 4, 2, [t[key(2)].id, t[key(4)].id, t[key(1)].id]),
+        ("tech", 2, 2, 2, [t[key(7)].id, t[key(8)].id]),
     ]
     assert sec[0]["top"][0]["read"] is True and sec[0]["name"] == "Orienteering"
     page, _ = await env_.svc.items(topic="orienteering", min_score=5)
@@ -1333,8 +1334,10 @@ async def test_texts_wanted_answered_and_summarised(menv: ModelEnv) -> None:
     assert rows[i[3]].text_state == "queued"
     story = await menv.svc.item(i[1])
     assert story["text"] == long and story["original_url"] == "https://pub.example/1"
+    assert story["text_at"] == rows[i[1]].text_at.isoformat()  # type: ignore[union-attr]
     gn = await menv.svc.item(i[6])
-    assert (gn["text"], gn["text_error"], gn["original_url"]) == (
+    assert (gn["text"], gn["text_at"], gn["text_error"], gn["original_url"]) == (
+        None,
         None,
         "robots",
         "https://pub.example/6",

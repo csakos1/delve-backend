@@ -184,12 +184,17 @@ def shapes() -> dict[str, Any]:
             "releases": "news_release[]|null",
             "others": "news_other[]",
             "text": "string|null",
+            "text_at": "string|null",
             "text_error": "string|null",
         },
         "news_other": _keys(news_other_out(nitem)),
-        # N2 (API 17): GET /api/v1/news/sections -> {data: [news_section]}: count = the
-        # topic's stories of the last day scored 5 or more, top = the best 3 of them
-        "news_section": {**_keys({"topic": "t", "name": "n", "count": 0}), "top": "news_item[]"},
+        # N2 (API 17): GET /api/v1/news/sections -> {data: [news_section]}: of the topic's
+        # stories scored 5 or more count = last day, week = last 7 days (API 18), new =
+        # unread of the last day (API 18); top = the best 3 of the last day
+        "news_section": {
+            **_keys({"topic": "t", "name": "n", "count": 0, "week": 0, "new": 0}),
+            "top": "news_item[]",
+        },
         # N1: GET /api/v1/news (state: empty|ok)
         "news_digest": {
             "top": "news_item[]",
