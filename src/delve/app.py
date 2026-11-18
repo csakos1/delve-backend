@@ -168,6 +168,7 @@ def create_app(
             notify=push.news,
             idle_s=settings.news_idle_s,
             call_timeout_s=settings.news_call_timeout_s,
+            helper=helper,
         )
         app.state.news = news
 

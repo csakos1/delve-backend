@@ -53,7 +53,9 @@ from delve.news_model import (
     system_prompt,
     why_body,
 )
+from delve.system import HelperClient
 
+from .fake_helper import FakeHelper
 from .fake_hermes import StreamingASGITransport
 from .fake_llama import FakeLlama
 
@@ -1305,10 +1307,11 @@ async def test_texts_wanted_answered_and_summarised(menv: ModelEnv) -> None:
         await s.commit()
     ids = {r.key: r.id for r in await menv.rows()}
     i = {n: ids[key(n)] for n in range(1, 9)}
-    # the best three of each topic (once explained), every 9, the saved one; no release
+    # the best five of each topic (once explained, 5 or more), every 9, the saved one; no
+    # release
     assert await menv.svc.refresh_wanted() is True
     wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
-    assert [w["id"] for w in wanted] == [i[8], i[1], i[6], i[2], i[3]]
+    assert [w["id"] for w in wanted] == [i[8], i[1], i[6], i[2], i[3], i[4]]
     assert {w["try"] for w in wanted} == {1}
     assert [w["gn"] for w in wanted if w["id"] == i[6]] == [True]
     assert await menv.svc.refresh_wanted() is False  # the same list: not written again
@@ -1370,9 +1373,55 @@ async def test_texts_wanted_answered_and_summarised(menv: ModelEnv) -> None:
     menv.now = NOW + timedelta(hours=27)
     await menv.svc.refresh_wanted()
     rows = {r.id: r for r in await menv.rows()}
-    assert {n: rows[i[n]].text_state for n in (3, 6, 8)} == {3: "failed", 6: "failed", 8: "failed"}
+    assert {n: rows[i[n]].text_state for n in (3, 4, 6, 8)} == dict.fromkeys((3, 4, 6, 8), "failed")
     assert rows[i[3]].text_error == "timeout"
     assert json.loads((menv.news_dir / "wanted.json").read_text())["items"] == []
+
+
+@pg
+async def test_fetch_text_starts_the_job_now(env_: Env) -> None:
+    """ "Fetch text" starts the agent's news-text job at once through the helper (the id
+    looked up once); without the helper or the job the story waits for the hourly run."""
+    env_.drop(batch([item(1), item(2), item(3)]))
+    await env_.svc.ingest()
+    ids = [r.id for r in await env_.rows()]
+    # no helper: queued, not now
+    out = await env_.svc.request_text(ids[0])
+    assert (out["text_state"], out["text_now"]) == ("queued", False)
+    helper = FakeHelper().start()
+    try:
+        env_.svc._helper = HelperClient(helper.path)
+        # the job is not there yet
+        out = await env_.svc.request_text(ids[1])
+        assert (out["text_state"], out["text_now"]) == ("queued", False)
+        assert helper.calls == ["agent.cron.list"]
+        helper.jobs = [
+            {"id": "aaaaaaaaaaaa", "name": "watch:x", "state": "scheduled"},
+            {"id": "d04e44df7731", "name": "news-text", "state": "scheduled"},
+        ]
+        out = await env_.svc.request_text(ids[1])
+        assert out["text_now"] is True
+        assert helper.calls[-2:] == ["agent.cron.list", "agent.cron.run d04e44df7731"]
+        assert (await env_.svc.item(ids[1]))["text_now"] is True
+        await env_.svc.request_text(ids[2])  # the id is known: no second list
+        assert helper.calls[-1] == "agent.cron.run d04e44df7731"
+        assert helper.calls.count("agent.cron.list") == 2
+        # the answer comes: not "now" any more
+        env_.drop({"v": 1, "at": iso(NOW), "items": [
+            {"id": ids[1], "try": 1, "status": "ok", "text": ARTICLE},
+        ]}, name="text-20261117T120000Z-1.json")  # fmt: skip
+        await env_.svc.ingest()
+        story = await env_.svc.item(ids[1])
+        assert (story["text_state"], story["text_now"]) == ("ok", False)
+        # the helper fails: the next request looks the job up again, and waits for the hour
+        helper.fail["agent.cron.run"] = ("failed", "boom")
+        out = await env_.svc.request_text(ids[0])
+        assert out["text_now"] is False
+        helper.fail.clear()
+        await env_.svc.request_text(ids[0])
+        assert helper.calls[-2:] == ["agent.cron.list", "agent.cron.run d04e44df7731"]
+    finally:
+        helper.stop()
 
 
 @pg

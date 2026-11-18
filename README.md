@@ -41,7 +41,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
 | 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
 | 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
-| 20 | News for the app (N2, API 17-18): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more | done |
+| 20 | News for the app (N2, API 17-19): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more | done |
 
 ## Development
 
@@ -671,7 +671,7 @@ story; if more match, they are listed with their ids.
 
 **Article texts (N1c, API 16)** - which stories, and how (delve-infra D-59): every poll
 the backend queues (`text_state: queued`, `text_try` + 1) the lead stories without a text
-state that deserve one - the best three of each topic of the last 24 hours and every 9
+state that deserve one - the best five of each topic of the last 24 hours and every 9
 (once grouped and explained, score 5 or more), the saved ones, and the ones the user asks
 for with `POST /api/v1/news/items/{id}/text` ("Fetch text") - and writes the queued ones
 (at most 40: asked, saved, best first) to `wanted.json` when the list changed. The agent's
@@ -683,7 +683,11 @@ publisher's address, shown as `original_url`), anything else `failed` with the j
 status in `text_error` (`robots`, `no_text`, `unresolved`, `http_403`, ...). A story queued
 for 26 hours without an answer fails with `timeout`. "Fetch text" queues a failed story
 again (a new try); a story with its text stays as it is; a day of releases has no article
-(409).
+(409). "Fetch text" also starts the `news-text` job at once through the helper
+(`agent.cron.list` once for its id, then `agent.cron.run`; API 19): the story's
+`text_now` is true for five minutes or until the answer, and the backend looks for the
+answer every 3 s for three minutes instead of every poll - the text is there in seconds.
+Without the helper or the job it waits for the hourly run (`text_now` false).
 
 **Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
 most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to

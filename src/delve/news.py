@@ -69,6 +69,7 @@ from delve.news_model import (
     system_prompt,
     why_body,
 )
+from delve.system import HelperClient, HelperFailed, HelperUnavailable
 
 log = logging.getLogger("delve.news")
 
@@ -126,7 +127,7 @@ RELEASE_SCORE = 6  # a day of releases is good to know, not a must-read: a rule,
 WAIT_LOG_S = 1800.0  # a News step that waits for llama says so this often (N342)
 RESCORE_MAX_HOURS = 48  # = SCORE_WINDOW: older stories would not be scored again
 # N1c: article texts and summaries
-TEXT_TOP_PER_TOPIC = 3  # the best of each topic of the last day get a text
+TEXT_TOP_PER_TOPIC = 5  # the best of each topic of the last day get a text
 TEXT_MIN_SCORE = 5
 TEXT_WANTED_MAX = 40  # in wanted.json (the collector asks at most this many a run)
 TEXT_QUEUE_MAX = timedelta(hours=26)  # queued longer: the collector did not answer
@@ -134,6 +135,11 @@ TEXT_CHARS = 30_000
 TEXT_MIN_CHARS = 500  # less is no text (a script-built page, a bot check)
 MAX_TEXT_RESULTS = 200
 SUMMARY_MAX_ATTEMPTS = 2
+TEXT_JOB = "news-text"  # the agent's cron job that fetches the texts (delve-infra D-59)
+TEXT_JOB_TIMEOUT_S = 15.0
+TEXT_NOW_S = 300.0  # a "Fetch text" counts as running now this long (`text_now`)
+FAST_POLL_S = 3.0  # after a "Fetch text" the answer is looked for this often...
+FAST_POLL_FOR_S = 180.0  # ...for this long
 STATUS_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 SETTINGS_KEY = "news"
 DEFAULT_SETTINGS: dict[str, Any] = {"setup": "", "digest_at": "07:00", "push": True,
@@ -660,6 +666,7 @@ class NewsService:
         call_timeout_s: float = 120.0,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        helper: HelperClient | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._hub = hub
@@ -683,6 +690,10 @@ class NewsService:
         self._waiting_since: float | None = None  # a step is due, llama is not free
         self._wait_logged = 0.0
         self._wanted_last: str | None = None  # the items of the last wanted.json written
+        self._helper = helper
+        self._text_job: str | None = None  # the news-text job's id, once found
+        self._fetching: dict[int, float] = {}  # story -> when its fetch was started now
+        self._fast_until = 0.0
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -713,7 +724,8 @@ class NewsService:
                 raise
             except Exception:
                 log.exception("news loop failed")
-            await asyncio.sleep(self._poll_s)
+            fast = self._mono() < self._fast_until
+            await asyncio.sleep(min(FAST_POLL_S, self._poll_s) if fast else self._poll_s)
 
     # --- the feed list for the collector ---------------------------------------------------
 
@@ -909,8 +921,9 @@ class NewsService:
         return sorted(set(pick))
 
     async def request_text(self, item_id: int) -> dict[str, Any]:
-        """The user asks for a story's text ("Fetch text"): queued for the collector's next
-        run (a failed one is tried again); the story."""
+        """The user asks for a story's text ("Fetch text"): queued (a failed one is tried
+        again) and the agent's news-text job started at once through the helper - the text
+        comes in seconds (`text_now`); without the helper it waits for the hourly run."""
         now = self._clock()
         async with self._sm() as s:
             row = await s.get(NewsItem, item_id, with_for_update=True)
@@ -927,8 +940,47 @@ class NewsService:
                 row.text_requested_at = row.text_requested_at or now
             await s.commit()
             lead_id = row.id
+            queued = row.text_state != "ok"
         await self.refresh_wanted()
+        if queued and await self._run_text_job():
+            self._fetching[lead_id] = self._mono()
+            self._fast_until = self._mono() + FAST_POLL_FOR_S
         return await self.item(lead_id)
+
+    async def _run_text_job(self) -> bool:
+        """Starts the agent's news-text job now (`agent.cron.run`); False without the
+        helper or the job (the hourly run brings the text then)."""
+        if self._helper is None:
+            return False
+        try:
+            if self._text_job is None:
+                data = await self._helper.call("agent.cron.list", timeout_s=TEXT_JOB_TIMEOUT_S)
+                jobs = data.get("jobs") or []
+                self._text_job = next(
+                    (j["id"] for j in jobs if isinstance(j, dict) and j.get("name") == TEXT_JOB),
+                    None,
+                )
+                if self._text_job is None:
+                    log.warning("news text job missing", extra={"job": TEXT_JOB})
+                    return False
+            await self._helper.call(
+                "agent.cron.run", arg=self._text_job, timeout_s=TEXT_JOB_TIMEOUT_S
+            )
+        except (HelperUnavailable, HelperFailed) as exc:
+            self._text_job = None  # looked up again next time (the job may be new)
+            log.warning("news text job not started", extra={"error": str(exc)[:200]})
+            return False
+        log.info("news text job started", extra={"job": self._text_job})
+        return True
+
+    def _text_now(self, item_id: int, state: str | None) -> bool:
+        started = self._fetching.get(item_id)
+        if started is None:
+            return False
+        if state != "queued" or self._mono() - started > TEXT_NOW_S:
+            del self._fetching[item_id]
+            return False
+        return True
 
     async def _ingest_file(self, name: str) -> int:
         path = self._batch_dir / name
@@ -1788,6 +1840,7 @@ class NewsService:
                 "others": [other_out(o) for o in others],
                 "text": row.text if row.text_state == "ok" else None,
                 "text_at": _iso(row.text_at) if row.text_state == "ok" else None,
+                "text_now": self._text_now(row.id, row.text_state),
                 "text_error": row.text_error if row.text_state == "failed" else None,
             }
 

@@ -1,5 +1,5 @@
 {
-  "api_revision": 18,
+  "api_revision": 19,
   "rest": [
     {
       "method": "GET",
@@ -731,6 +731,7 @@
       "others": "news_other[]",
       "text": "string|null",
       "text_at": "string|null",
+      "text_now": true,
       "text_error": "string|null"
     },
     "news_other": {

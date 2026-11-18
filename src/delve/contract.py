@@ -185,6 +185,7 @@ def shapes() -> dict[str, Any]:
             "others": "news_other[]",
             "text": "string|null",
             "text_at": "string|null",
+            "text_now": True,
             "text_error": "string|null",
         },
         "news_other": _keys(news_other_out(nitem)),
