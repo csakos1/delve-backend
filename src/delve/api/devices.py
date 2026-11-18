@@ -125,6 +125,7 @@ class Notify(BaseModel):
     brief: StrictBool | None = None
     watches: StrictBool | None = None
     system: StrictBool | None = None
+    news: StrictBool | None = None
 
 
 class DevicePatch(BaseModel):

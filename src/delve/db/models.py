@@ -591,6 +591,12 @@ class NewsItem(Base):
     setup: Mapped[bool | None] = mapped_column(Boolean)
     summary_hu: Mapped[str | None] = mapped_column(Text)
     scored_at: Mapped[datetime | None] = mapped_column(TZ)
+    # N1b: tries of the score and why steps, when the story was compared with the others
+    # of its days (grouping), when it was pushed
+    score_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    why_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    grouped_at: Mapped[datetime | None] = mapped_column(TZ)
+    pushed_at: Mapped[datetime | None] = mapped_column(TZ)
     read_at: Mapped[datetime | None] = mapped_column(TZ)
     saved_at: Mapped[datetime | None] = mapped_column(TZ)
     feedback: Mapped[str | None] = mapped_column(Text)

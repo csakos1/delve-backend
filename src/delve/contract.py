@@ -189,6 +189,7 @@ def shapes() -> dict[str, Any]:
             "state": True,
             "sources": True,
             "failing": True,
+            "weekly": "{count}|null",
         },
         "news_topic": _keys(news_topic_out(ntopic)),
         # last_status: ok|not_modified|skipped|error|null; origin: import|app|agent

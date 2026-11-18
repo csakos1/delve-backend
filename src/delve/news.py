@@ -45,6 +45,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delve.db.models import NewsBatch, NewsItem, NewsSource, NewsTopic, SystemState
 from delve.events import EventHub
+from delve.llama import LlamaClient, LlamaUnavailable
+from delve.news_model import (
+    Candidate,
+    ModelAnswerError,
+    TopicRef,
+    content_of,
+    group_body,
+    parse_groups,
+    parse_scores,
+    parse_whys,
+    score_body,
+    system_prompt,
+    why_body,
+)
 
 log = logging.getLogger("delve.news")
 
@@ -76,6 +90,24 @@ DIGEST_WINDOW = timedelta(hours=24)
 BATCH_KEEP = timedelta(days=10)  # the collector removes its files after 3
 CLEANUP_S = 3600.0
 FAILING_IN_ROW = 3
+# N1b: the model steps
+SCORE_BATCH = 12  # ~10 s of llama time: a run that comes in waits at most that (N327)
+SCORE_WINDOW = timedelta(hours=48)  # older unscored items are left alone
+SCORE_MAX_ATTEMPTS = 3
+GROUP_MIN_SCORE = 5
+GROUP_WINDOW = timedelta(hours=36)
+GROUP_MAX_ITEMS = 40
+GROUP_MIN_NEW = 8  # or the oldest new one waited GROUP_MAX_WAIT
+GROUP_MAX_WAIT = timedelta(minutes=20)
+WHY_MIN_SCORE = 5
+WHY_BATCH = 5
+WHY_MAX_ATTEMPTS = 2
+FAIL_BACKOFF_S = 60.0
+PUSH_MIN_SCORE = 9
+PUSH_WINDOW = timedelta(hours=12)  # a story older than this is not pushed any more
+PUSH_UNTIL_HOUR = 22  # pushes wait from 22:00 until digest_at
+WEEKLY_TOP = 10
+WEEKLY_MIN_SCORE = 5
 SETTINGS_KEY = "news"
 DEFAULT_SETTINGS: dict[str, Any] = {"setup": "", "digest_at": "07:00", "push": True,
                                     "push_max": 2}  # fmt: skip
@@ -416,6 +448,15 @@ def parse_batch(raw: bytes) -> Batch:
     return b
 
 
+def _publisher(raw: Any) -> str | None:
+    """A feed title as the publisher's name: "Scuttlebutt Sailing News: Providing sailing
+    news for sailors" -> "Scuttlebutt Sailing News"."""
+    name = _clip(raw, PUBLISHER_CHARS)
+    if name and len(name) > 30 and name.find(": ") > 3:
+        name = name.split(": ", 1)[0]
+    return name
+
+
 def _batch_item(it: Any) -> BatchItem:
     if not isinstance(it, dict):
         raise ValueError("not an object")
@@ -445,7 +486,7 @@ def _batch_item(it: Any) -> BatchItem:
         source=source,
         url=url,
         title=clean,
-        publisher=_clip(it.get("publisher"), PUBLISHER_CHARS),
+        publisher=_publisher(it.get("publisher")),
         published=_parse_ts(published) if published is not None else None,
         excerpt=_clip(it.get("summary"), EXCERPT_CHARS),
         gn=gn,
@@ -466,7 +507,12 @@ class NewsService:
         batch_dir: Path,
         poll_s: float = 30.0,
         retention_days: int = 30,
+        llama: LlamaClient | None = None,
+        notify: Callable[[int], None] | None = None,
+        idle_s: float = 180.0,
+        call_timeout_s: float = 120.0,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._sm = sessionmaker
         self._hub = hub
@@ -478,6 +524,14 @@ class NewsService:
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()  # one ingest at a time
         self._no_dir_logged = False
+        self._llama = llama
+        self.notify = notify
+        self._idle_s = idle_s
+        self._call_timeout_s = call_timeout_s
+        self._mono = monotonic
+        self._retry_at = 0.0
+        self._seen_total: float | None = None  # llama's token counters, last seen
+        self._active_at = monotonic()  # when llama was last seen busy (start: now)
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -495,11 +549,10 @@ class NewsService:
 
     async def _loop(self) -> None:
         next_cleanup = 0.0
-        with contextlib.suppress(Exception):
-            await self.write_sources()
         while True:
             try:
                 await self.ingest()
+                await self.push_due()
                 if time.monotonic() >= next_cleanup:
                     await self.cleanup()
                     await self.write_sources()  # mends a file removed by hand
@@ -684,6 +737,320 @@ class NewsService:
         await s.flush()
         return 0
 
+    # --- the model steps (N1b) -------------------------------------------------------------
+
+    async def work(self) -> bool:
+        """One model step between runs (`RunManager.side_work`, after the watchers): a batch
+        of scores, a grouping, or a batch of Hungarian whys. True if llama was asked
+        (the worker looks at its queue again before the next step)."""
+        if self._llama is None or self._mono() < self._retry_at:
+            return False
+        async with self._sm() as s:
+            step = await self._next_step(s)
+        if step is None:
+            return False
+        if not await self._llama_idle():
+            return False
+        kind, rows = step
+        started = self._mono()
+        try:
+            if kind == "score":
+                tokens = await self._score(rows)
+            elif kind == "group":
+                tokens = await self._group(rows)
+            else:
+                tokens = await self._why(rows)
+        except (LlamaUnavailable, ModelAnswerError) as exc:
+            self._retry_at = self._mono() + FAIL_BACKOFF_S
+            await self._step_failed(kind, rows)
+            log.warning("news step failed", extra={"step": kind, "items": len(rows),
+                                                   "error": str(exc)[:200]})  # fmt: skip
+            return False
+        finally:
+            await self._own_use()
+        ms = int((self._mono() - started) * 1000)
+        log.info("news step", extra={"step": kind, "items": len(rows), "ms": ms, **tokens})
+        if kind == "why":
+            await self.push_due()
+        return True
+
+    async def _llama_idle(self) -> bool:
+        """llama-server free, and nobody used it for `idle_s`: a coding session talks to it
+        directly, and its one slot's prompt cache would be pushed out by a News request."""
+        assert self._llama is not None  # noqa: S101
+        try:
+            busy = (await self._llama.slot()).processing
+            m = await self._llama.metrics()
+        except LlamaUnavailable:
+            self._retry_at = self._mono() + FAIL_BACKOFF_S
+            return False
+        total = m.get("prompt_tokens_total", 0.0) + m.get("tokens_predicted_total", 0.0)
+        now = self._mono()
+        if busy or total != self._seen_total:
+            self._seen_total = total
+            self._active_at = now
+            return False
+        return now - self._active_at >= self._idle_s
+
+    async def _own_use(self) -> None:
+        """Our own request does not count as somebody using llama."""
+        if self._llama is None:
+            return
+        with contextlib.suppress(LlamaUnavailable):
+            m = await self._llama.metrics()
+            self._seen_total = m.get("prompt_tokens_total", 0.0) + m.get(
+                "tokens_predicted_total", 0.0
+            )
+
+    async def _next_step(self, s: AsyncSession) -> tuple[str, list[NewsItem]] | None:
+        now = self._clock()
+        live = and_(self._visible(), NewsItem.kind.in_(KINDS))
+        rows = list(
+            (
+                await s.execute(
+                    self._base()
+                    .where(
+                        live,
+                        NewsItem.score.is_(None),
+                        NewsItem.score_attempts < SCORE_MAX_ATTEMPTS,
+                        NewsItem.seen_at >= now - SCORE_WINDOW,
+                    )
+                    .order_by(NewsItem.seen_at.desc(), NewsItem.id.desc())
+                    .limit(SCORE_BATCH)
+                )
+            ).scalars()
+        )
+        if rows:
+            return "score", rows
+        fresh = and_(
+            live, NewsItem.score >= GROUP_MIN_SCORE, NewsItem.seen_at >= now - GROUP_WINDOW
+        )
+        new = list(
+            (
+                await s.execute(
+                    self._base()
+                    .where(fresh, NewsItem.grouped_at.is_(None))
+                    .order_by(NewsItem.id)
+                    .limit(GROUP_MAX_ITEMS)
+                )
+            ).scalars()
+        )
+        waited = bool(new) and min(r.scored_at or now for r in new) <= now - GROUP_MAX_WAIT
+        if new and (len(new) >= GROUP_MIN_NEW or waited):
+            room = GROUP_MAX_ITEMS - len(new)
+            known = list(
+                (
+                    await s.execute(
+                        self._base()
+                        .where(fresh, NewsItem.grouped_at.is_not(None))
+                        .order_by(NewsItem.score.desc(), NewsItem.id.desc())
+                        .limit(room)
+                    )
+                ).scalars()
+            ) if room > 0 else []  # fmt: skip
+            return "group", new + known
+        rows = list(
+            (
+                await s.execute(
+                    self._base()
+                    .where(
+                        live,
+                        NewsItem.score >= WHY_MIN_SCORE,
+                        NewsItem.why.is_(None),
+                        NewsItem.why_attempts < WHY_MAX_ATTEMPTS,
+                        NewsItem.grouped_at.is_not(None),
+                        NewsItem.seen_at >= now - SCORE_WINDOW,
+                    )
+                    .order_by(NewsItem.score.desc(), NewsItem.id.desc())
+                    .limit(WHY_BATCH)
+                )
+            ).scalars()
+        )
+        if rows:
+            return "why", rows
+        return None
+
+    async def _prompt(self) -> tuple[list[TopicRef], str]:
+        async with self._sm() as s:
+            topics = [
+                TopicRef(t.id, t.name, t.description)
+                for t in (
+                    await s.execute(
+                        select(NewsTopic)
+                        .where(NewsTopic.enabled)
+                        .order_by(NewsTopic.position, NewsTopic.id)
+                    )
+                ).scalars()
+            ]
+            row = await s.get(SystemState, SETTINGS_KEY)
+        setup = settings_out(row.value if row else None)["setup"]
+        return topics, system_prompt(topics, setup)
+
+    async def _ask(self, body: dict[str, Any]) -> tuple[str, dict[str, int]]:
+        assert self._llama is not None  # noqa: S101
+        answer = await self._llama.chat(body, timeout_s=self._call_timeout_s)
+        return content_of(answer)
+
+    async def _score(self, rows: list[NewsItem]) -> dict[str, int]:
+        topics, system = await self._prompt()
+        text, tokens = await self._ask(score_body(system, [_candidate(r) for r in rows]))
+        scores = parse_scores(text, len(rows), len(topics))
+        if not scores:
+            raise ModelAnswerError("no score line in the answer")
+        now = self._clock()
+        async with self._sm() as s:
+            for n, r in enumerate(rows, 1):
+                row = await s.get(NewsItem, r.id, with_for_update=True)
+                if row is None:
+                    continue
+                if n in scores:
+                    score, topic = scores[n]
+                    row.score, row.scored_at = score, now
+                    if topic:
+                        row.topic_id = topics[topic - 1].id
+                else:
+                    row.score_attempts += 1
+                    if row.score_attempts >= SCORE_MAX_ATTEMPTS:  # left out three times
+                        row.score, row.scored_at = 0, now
+            await s.commit()
+        return tokens
+
+    async def _group(self, rows: list[NewsItem]) -> dict[str, int]:
+        _topics, system = await self._prompt()
+        text, tokens = await self._ask(group_body(system, [_candidate(r) for r in rows]))
+        groups = [] if text.strip().lower().startswith("none") else parse_groups(text, len(rows))
+        now = self._clock()
+        merged = 0
+        async with self._sm() as s:
+            for group in groups:
+                members = [rows[n - 1] for n in group]
+                if all(m.grouped_at is not None for m in members):
+                    continue  # stories kept apart before stay apart
+                head = min(members, key=lambda m: (m.seen_at, m.id))
+                others = [m.id for m in members if m.id != head.id]
+                await s.execute(
+                    update(NewsItem).where(NewsItem.dup_of.in_(others)).values(dup_of=head.id)
+                )
+                await s.execute(
+                    update(NewsItem).where(NewsItem.id.in_(others)).values(dup_of=head.id)
+                )
+                best = max(m.score or 0 for m in members)
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id == head.id, NewsItem.score < best)
+                    .values(score=best, why=None, why_attempts=0)
+                )
+                merged += len(others)
+            await s.execute(
+                update(NewsItem)
+                .where(NewsItem.id.in_([r.id for r in rows]), NewsItem.grouped_at.is_(None))
+                .values(grouped_at=now)
+            )
+            await s.commit()
+        if merged:
+            log.info("news stories merged", extra={"groups": len(groups), "items": merged})
+        return tokens
+
+    async def _why(self, rows: list[NewsItem]) -> dict[str, int]:
+        topics, system = await self._prompt()
+        text, tokens = await self._ask(why_body(system, topics, [_candidate(r) for r in rows]))
+        whys = parse_whys(text, len(rows), {t.id for t in topics})
+        if not whys:
+            raise ModelAnswerError("no why line in the answer")
+        async with self._sm() as s:
+            for n, r in enumerate(rows, 1):
+                row = await s.get(NewsItem, r.id, with_for_update=True)
+                if row is None:
+                    continue
+                w = whys.get(n)
+                if w is None:
+                    row.why_attempts += 1
+                    continue
+                row.why = w.why
+                # releases of the reader's own tools concern his setup by rule (N328)
+                row.setup = True if row.kind == "release" else w.setup
+                if w.topic:
+                    row.topic_id = w.topic
+            await s.commit()
+        return tokens
+
+    async def _step_failed(self, kind: str, rows: list[NewsItem]) -> None:
+        if kind == "group":
+            return  # tried again at the next chance
+        ids = [r.id for r in rows]
+        now = self._clock()
+        async with self._sm() as s:
+            if kind == "score":
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id.in_(ids))
+                    .values(score_attempts=NewsItem.score_attempts + 1)
+                )
+                await s.execute(
+                    update(NewsItem)
+                    .where(
+                        NewsItem.id.in_(ids),
+                        NewsItem.score.is_(None),
+                        NewsItem.score_attempts >= SCORE_MAX_ATTEMPTS,
+                    )
+                    .values(score=0, scored_at=now)
+                )
+            else:
+                await s.execute(
+                    update(NewsItem)
+                    .where(NewsItem.id.in_(ids))
+                    .values(why_attempts=NewsItem.why_attempts + 1)
+                )
+            await s.commit()
+
+    # --- push ----------------------------------------------------------------------------
+
+    async def push_due(self) -> int:
+        """The must-reads (score 9, a why) of the last hours, at most `push_max` a day, not
+        between 22:00 and the digest time (they wait). The PushService sends only to the
+        devices with `notify.news`."""
+        if self.notify is None:
+            return 0
+        now = self._clock()
+        local = now.astimezone(TZ)
+        async with self._sm() as s:
+            row = await s.get(SystemState, SETTINGS_KEY)
+            cfg = settings_out(row.value if row else None)
+            hh, mm = (int(x) for x in cfg["digest_at"].split(":"))
+            if not cfg["push"] or not (hh, mm) <= (local.hour, local.minute) < (PUSH_UNTIL_HOUR, 0):
+                return 0
+            day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+            done = await s.scalar(
+                select(func.count()).select_from(NewsItem).where(NewsItem.pushed_at >= day_start)
+            )
+            room = cfg["push_max"] - int(done or 0)
+            if room <= 0:
+                return 0
+            rows = list(
+                (
+                    await s.execute(
+                        self._base()
+                        .where(
+                            self._visible(),
+                            NewsItem.score >= PUSH_MIN_SCORE,
+                            NewsItem.why.is_not(None),
+                            NewsItem.pushed_at.is_(None),
+                            NewsItem.read_at.is_(None),
+                            NewsItem.seen_at >= now - PUSH_WINDOW,
+                        )
+                        .order_by(NewsItem.score.desc(), NewsItem.id)
+                        .limit(room)
+                    )
+                ).scalars()
+            )
+            for r in rows:
+                r.pushed_at = now
+            await s.commit()
+            ids = [r.id for r in rows]
+        for item_id in ids:
+            self.notify(item_id)
+        return len(ids)
+
     # --- reads ----------------------------------------------------------------------------
 
     def _visible(self) -> Any:
@@ -754,6 +1121,14 @@ class NewsService:
                 .where(NewsSource.enabled, NewsSource.errors_in_row >= FAILING_IN_ROW)
             )
             items = await self._with_counts(s, top)
+            weekly = None
+            if await self._weekly_day(s, now):
+                n = await s.scalar(
+                    select(func.count()).select_from(
+                        self._weekly_query(now).limit(WEEKLY_TOP).subquery()
+                    )
+                )
+                weekly = {"count": int(n or 0)}
         return {
             "top": items,
             "new": int(new or 0),
@@ -761,16 +1136,45 @@ class NewsService:
             "state": "empty" if last_at is None else "ok",
             "sources": int(enabled or 0),
             "failing": int(failing or 0),
+            "weekly": weekly,
         }
+
+    async def _weekly_day(self, s: AsyncSession, now: datetime) -> bool:
+        """Monday from the digest time on: the Dashboard shows "Last week" first."""
+        local = now.astimezone(TZ)
+        if local.weekday() != 0:
+            return False
+        row = await s.get(SystemState, SETTINGS_KEY)
+        hh, mm = settings_out(row.value if row else None)["digest_at"].split(":")
+        return (local.hour, local.minute) >= (int(hh), int(mm))
+
+    def _weekly_query(self, now: datetime) -> Any:
+        """The best stories of the last 7 days that were not opened."""
+        return (
+            self._base()
+            .where(
+                self._visible(),
+                NewsItem.read_at.is_(None),
+                NewsItem.score >= WEEKLY_MIN_SCORE,
+                NewsItem.seen_at >= now - timedelta(days=7),
+            )
+            .order_by(NewsItem.score.desc(), NewsItem.id.desc())
+        )
 
     async def items(
         self,
         *,
         topic: str | None = None,
         saved: bool = False,
+        weekly: bool = False,
         before: int | None = None,
         limit: int = 50,
     ) -> tuple[list[dict[str, Any]], int | None]:
+        if weekly:  # one page, best first
+            async with self._sm() as s:
+                q = self._weekly_query(self._clock()).limit(min(limit, WEEKLY_TOP))
+                rows = list((await s.execute(q)).scalars())
+                return await self._with_counts(s, rows), None
         async with self._sm() as s:
             q = self._base()
             if saved:
@@ -1085,6 +1489,10 @@ def _write_file(tmp: Path, path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _candidate(r: NewsItem) -> Candidate:
+    return Candidate(title=r.title, publisher=r.publisher, excerpt=r.excerpt)
 
 
 def _apply_report(src: NewsSource, rep: dict[str, Any], at: datetime, now: datetime) -> None:

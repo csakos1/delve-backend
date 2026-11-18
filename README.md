@@ -39,7 +39,8 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 15 | Notification mirroring, phone to desktop: the phone's events in, the desktop agent's long poll out, nothing stored; device roles (`app`, `desk`); the posting app's icon | done |
 | 16 | Personal profile: a core in every agent run's instructions and topic files the agent reads on demand, kept per conversation; read and edited by the app; the part marked for the General chats | done |
 | 17 | News (N1a): the agent's collector batches in, the feed list out; topics, feeds, duplicates by title, a day of releases in one row; the Dashboard block, the lists, read / saved / feedback; import / export | done |
-| 18 | News (N1b): scoring, grouping, Hungarian summaries and article text between runs; Google News links; push; the weekly | next |
+| 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
+| 19 | News (N1c): article text (robots, Google News links through the renderer) and Hungarian summaries | next |
 
 ## Development
 
@@ -126,7 +127,7 @@ the desktop agent's instead.
 |---|---|---|
 | `POST` | `/api/v1/devices/register` | `{code, name?, app_version?}` → 201 `{device_id, name, token}`; 400 `invalid_code`, 429 after 10 failures a minute |
 | `GET` | `/api/v1/devices/me` | `{id, name, created_at, last_seen_at, fcm, push, notify}`; `push`: the server can send pushes |
-| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?, watches?, system?}}` (booleans; left-out keys keep their value) → the device |
+| `PATCH` | `/api/v1/devices/me` | `{notify: {approvals?, run_done?, water?, brief?, watches?, system?, news?}}` (booleans; left-out keys keep their value) → the device |
 | `PUT` | `/api/v1/devices/me/fcm` | `{token}` (`null` clears) → 204 |
 | `DELETE` | `/api/v1/devices/me` | unpair: revokes the calling token (and its FCM token) → 204 |
 | `GET` | `/api/v1/status` | `{server_version, api_revision, revision, hermes, hermes_version, thinking_route}` |
@@ -163,7 +164,7 @@ the desktop agent's instead.
 | `PUT` | `/api/v1/persona/topics/{name}` | `{title, summary?, text, general?}` creates or replaces a topic file (`name`: lowercase letters, digits, `-`) → `persona`; 409 `too_many_topics` |
 | `DELETE` | `/api/v1/persona/topics/{name}` | → `persona`; 404 `topic_not_found` |
 | `GET` | `/api/v1/news` | `news_digest`: the Dashboard's News block; see "News" |
-| `GET` | `/api/v1/news/items?topic=&saved=&before=&limit=` | `{data: [news_item], next_before}`: the lead stories, newest first; `saved=true`: the saved ones |
+| `GET` | `/api/v1/news/items?topic=&saved=&weekly=&before=&limit=` | `{data: [news_item], next_before}`: the lead stories, newest first; `saved=true`: the saved ones; `weekly=true`: the best unopened ones of the last 7 days (one page, best first) |
 | `GET` | `/api/v1/news/items/{id}` | `news_story`: a story with its other sources (a duplicate's id opens its story); 404 `news_item_not_found` |
 | `PATCH` | `/api/v1/news/items/{id}` | `{read?, saved?, feedback?: more\|less\|null}` → `news_story` |
 | `GET` | `/api/v1/news/topics` | `{data: [news_topic]}` by position |
@@ -500,6 +501,7 @@ needs outbound HTTPS for this (delve-infra drop-in `delve-backend.service.d/fcm.
 | `card` | `card_id, type` (`water`), `severity, station, level_cm, lake_avg_cm, trend_cm_24h, lake_avg_trend_cm_24h, measured_at` | a new water card from the scheduled script (`origin: script`, at most an hour old), to devices with `notify.water`; high priority, collapse key `water` |
 | `card` | `card_id, type` (`brief`), `severity, date, uptime_s, updates_count, open_incidents, llama_state, late_by_s, level_cm, lake_avg_cm` | a new morning brief (at most an hour old), to devices with `notify.brief`; high priority, collapse key `brief` |
 | `watch` | `change` (`hit`/`available`), `slug, name, item` (the `watch_item` id), `item_id, title` (≤ 120), `price, reason` (≤ 240), `url, reserved` (`true`/`false`) | a watcher's hit, and a reserved hit that became available, to devices with `notify.watches` (on by default); high priority, collapse key `watch:<slug>:<item_id>`, TTL 24 h |
+| `news` | `item` (the `news_item` id), `title` (≤ 120), `publisher, topic` (its name), `why` (≤ 240), `url, score` | a must-read story (see "News"), to devices with `notify.news` (off by default until N2); high priority, collapse key `news:<item>`, TTL 12 h |
 | `system` | `event` (`switch_failed`/`switch_down`), `to`, `back` (model names as shown; `back` empty when there was nothing to go back to), `at` | a model switch that did not work: the previous model is loaded again (`switch_failed`) or llama-server is not running (`switch_down`), to devices with `notify.system` (on by default); high priority, collapse key `llama-switch`, TTL 6 h |
 | `run_done` | `conversation_id, run_id, title, status` (`completed`/`failed`), `preview` (≤ 120 chars) | for runs of at least `PUSH_RUN_DONE_MIN_S` (20 s; scheduled runs always; a shorter one is logged as `run_done not pushed: short run`); the app shows nothing while it is in the foreground; high priority |
 
@@ -508,7 +510,7 @@ dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
-milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`, `system`); revoked devices and devices without an FCM token get nothing.
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`, `system`, `news`); revoked devices and devices without an FCM token get nothing.
 Whether the phone has a socket open does not matter: a phone locked a moment ago may
 still look connected here for up to a minute (its close never arrived), so the log line
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An
@@ -615,8 +617,35 @@ times in a row. Stories older than `DELVE_NEWS_RETENTION_DAYS` go, saved ones st
 
 `news_digest`: `top` (at most 4 unread lead stories of the last 24 hours, the best score
 first, then the newest), `new` (how many unread there are), `updated_at` (the last batch),
-`state` (`empty` before the first batch, else `ok`), `sources`, `failing`. Until scoring
-(N1b) `score`, `why`, `setup` and `summary_hu` are null and the order is by time.
+`state` (`empty` before the first batch, else `ok`), `sources`, `failing`, `weekly`
+(`{count}` on Mondays from `digest_at` on - the Dashboard's "Last week" row - else null).
+`summary_hu` stays null until N1c.
+
+**The model steps (N1b)** run between runs (`RunManager.side_work`, after a watcher's
+verdict) with direct llama calls - no tools, no thinking, the items marked as data - and
+only when llama-server has been idle for `DELVE_NEWS_IDLE_S` (180 s): it has one slot, and
+a coding session that talks to it directly (opencode, VS Code) would lose its prompt cache
+to a News request. Idle = the slot is not processing and the token counters of `/metrics`
+did not move (our own requests do not count). One step at a time, the first that has work:
+
+1. **score** - up to 12 unscored lead stories of the last 48 hours, newest first: `<item>
+   <score 0-9> <topic number>` per line against the enabled topics' descriptions and
+   `setup`; the topic the model picks replaces the feed's. An item left out three times
+   gets 0.
+2. **group** - the stories scored 5 or more in the last 36 hours that were not compared yet
+   (once there are 8, or the oldest waited 20 minutes), with the known ones of those days:
+   the items about *the same specific event* (also across Hungarian and English) become one
+   story under its earliest item (`dup_of`, the others listed in the story view), with the
+   best score of the group. Stories kept apart once are not merged by a later answer alone.
+3. **why** - up to 5 stories scored 5 or more after grouping, best first: the topic, a
+   Hungarian "why" of at most 12 words, and `setup` (a release row is always `true`: the
+   reader's own tools).
+
+A failed call (llama down, no usable line) counts a try and pauses the steps for a minute.
+
+**Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
+most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to
+the devices with `notify.news`, which is off until the app has its channel (N2).
 
 **What the operator reads is personal** - the topics with their descriptions (what the
 model will score against), the feeds, and `setup` (a line about his own machines, for

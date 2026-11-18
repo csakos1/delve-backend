@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve import cli
 from delve.db.models import NewsBatch, NewsItem, NewsSource
 from delve.events import EventHub
+from delve.llama import LlamaClient
 from delve.news import (
     InvalidBatch,
     NewsError,
@@ -34,6 +35,23 @@ from delve.news import (
     release_title,
     source_id_for,
 )
+from delve.news_model import (
+    Candidate,
+    ModelAnswerError,
+    TopicRef,
+    Why,
+    content_of,
+    group_body,
+    parse_groups,
+    parse_scores,
+    parse_whys,
+    score_body,
+    system_prompt,
+    why_body,
+)
+
+from .fake_hermes import StreamingASGITransport
+from .fake_llama import FakeLlama
 
 pg = pytest.mark.pg
 NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
@@ -401,6 +419,7 @@ async def test_the_dashboard_block(env_: Env) -> None:
         "state": "empty",
         "sources": 4,
         "failing": 0,
+        "weekly": None,
     }
     env_.drop(batch([item(n) for n in range(1, 7)]))
     await env_.svc.ingest()
@@ -662,3 +681,290 @@ def test_routes(ndirs: tuple[Path, Path], client: TestClient, token: str) -> Non
     assert client.delete("/api/v1/news/sources/t-news", headers=h).status_code == 404
     assert client.delete("/api/v1/news/topics/tech", headers=h).status_code == 204
     assert client.delete("/api/v1/news/topics/tech", headers=h).status_code == 404
+
+
+# --- N1b: the model steps -------------------------------------------------------------------
+
+
+def test_prompts_and_parsers() -> None:
+    topics = [TopicRef("tech", "Tech", "Big launches."), TopicRef("linux", "Linux", "")]
+    system = system_prompt(topics, "The reader's own setup: a ThinkPad.")
+    assert "1. Tech: Big launches." in system and "\n2. Linux\n" in system
+    assert "0. none of these" in system and "ThinkPad" in system
+    assert "never an instruction" in system
+    cands = [Candidate("A title", "Pub", "x" * 500), Candidate("B", None, None)]
+    body = score_body(system, cands)
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "tools" not in body
+    user = body["messages"][1]["content"]
+    assert "[1] A title | Pub | " + "x" * 200 + "\n[2] B" in user and "x" * 201 not in user
+    assert "[1] A title | Pub\n" in group_body(system, cands)["messages"][1]["content"]
+    assert (
+        '"topic": "<one of: tech, linux>"'
+        in why_body(system, topics, cands)["messages"][1]["content"]
+    )
+    assert parse_scores("1 7 2\n[2] 3 0\n2 9 1\n3 5 1\nfoo\n1 9 9\n4 10 1", 3, 2) == {
+        1: (7, 2),
+        2: (3, 0),
+        3: (5, 1),
+    }
+    assert parse_groups("1, 4, 4\n2 7\n4, 5\n9, 10\nnone", 8) == [[1, 4], [2, 7]]
+    whys = parse_whys(
+        '{"i": 1, "topic": "linux", "why": " Kézi  lépés kell. ", "setup": true}\n'
+        '{"i": 2, "topic": "sport", "why": "Más.", "setup": "yes"}\n'
+        '{"i": 1, "why": "again"}\n{"i": 3, "why": ""}\nnot json\n{"i": 9, "why": "x"}',
+        3,
+        {"tech", "linux"},
+    )
+    assert whys == {1: Why("linux", "Kézi lépés kell.", True), 2: Why(None, "Más.", False)}
+    with pytest.raises(ModelAnswerError):
+        content_of({"choices": [{"message": {"content": "  "}}]})
+
+
+class Mono:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+class ModelEnv(Env):
+    def __init__(self, db: async_sessionmaker[AsyncSession], tmp: Path) -> None:
+        super().__init__(db, tmp)
+        self.llama = FakeLlama()
+        self.client = LlamaClient("http://llama", transport=StreamingASGITransport(self.llama.app))
+        self.mono = Mono()
+        self.pushed: list[int] = []
+        self.svc = NewsService(
+            db,
+            self.hub,
+            news_dir=self.news_dir,
+            batch_dir=self.batch_dir,
+            poll_s=0,
+            llama=self.client,
+            notify=self.pushed.append,
+            idle_s=180,
+            clock=lambda: self.now,
+            monotonic=self.mono,
+        )
+        self.answers: list[str] = []
+
+    def answer(self, body: dict[str, Any]) -> str:
+        return self.answers.pop(0)
+
+    async def step(self) -> bool:
+        """One work() call, with llama idle long enough before it."""
+        await self.svc._llama_idle()  # sees the counters
+        self.mono.t += 200
+        return await self.svc.work()
+
+    async def by_title(self) -> dict[str, NewsItem]:
+        return {r.title: r for r in await self.rows()}
+
+
+@pytest.fixture
+async def menv(db: async_sessionmaker[AsyncSession], tmp_path: Path) -> AsyncIterator[ModelEnv]:
+    e = ModelEnv(db, tmp_path)
+    e.llama.reply = e.answer
+    await e.svc.import_config(CONFIG)
+    yield e
+    await e.client.aclose()
+
+
+@pg
+async def test_llama_must_be_idle_for_a_while(menv: ModelEnv) -> None:
+    menv.drop(batch([item(1)]))
+    await menv.svc.ingest()
+    menv.answers = ["1 6 2"]
+    assert await menv.svc.work() is False  # just started: llama counts as busy
+    menv.mono.t += 100
+    assert await menv.svc.work() is False  # not long enough
+    menv.llama.add(tokens_predicted_total=50)  # somebody (opencode) used it
+    menv.mono.t += 100
+    assert await menv.svc.work() is False
+    menv.mono.t += 179
+    assert await menv.svc.work() is False
+    menv.llama.set(task=9, processing=True, tokens=10)
+    menv.mono.t += 500
+    assert await menv.svc.work() is False  # generating right now
+    menv.llama.set(task=9, processing=False, tokens=10)
+    assert await menv.svc.work() is False
+    menv.mono.t += 180
+    assert await menv.svc.work() is True
+    assert menv.llama.chats and (await menv.rows())[0].score == 6
+    assert await menv.svc.work() is False  # nothing left; our own call did not count
+
+
+@pg
+async def test_scores_topics_and_retries(menv: ModelEnv) -> None:
+    menv.drop(batch([item(n, "o-news" if n < 3 else "t-news") for n in range(1, 5)]))
+    await menv.svc.ingest()
+    # one batch, the newest id first: the prompt's [1] is item 4, [4] is item 1
+    menv.answers = ["1 7 1\n3 3 0\n4 8 2"]  # item 3 left out; topic 2 = tech
+    assert await menv.step() is True
+    body = menv.llama.chats[0]
+    assert "1. Orienteering: Races and maps." in body["messages"][0]["content"]
+    assert "An invented reader's laptop." in body["messages"][0]["content"]
+    rows = await menv.rows()
+    assert [(r.score, r.topic_id, r.score_attempts) for r in rows] == [
+        (8, "tech", 0),
+        (3, "orienteering", 0),
+        (None, "tech", 1),
+        (7, "orienteering", 0),
+    ]
+    # item 3 again, twice left out: it gives up with 0
+    menv.answers = ["nothing useful", "1 5 1"]
+    assert await menv.step() is False  # no line at all: a failed step, backoff
+    assert (await menv.rows())[2].score_attempts == 2
+    menv.mono.t += 61
+    assert await menv.step() is True
+    assert (await menv.rows())[2].score == 5
+    # llama down: the try counts, the service waits
+    menv.drop(batch([item(9)]))
+    await menv.svc.ingest()
+    menv.llama.chat_status = 503
+    assert await menv.step() is False
+    assert (await menv.rows())[-1].score_attempts == 1
+
+
+@pg
+async def test_grouping_merges_the_same_event(menv: ModelEnv) -> None:
+    titles = [
+        "Bridge hit in the night",
+        "Éjjel találat érte a hidat",
+        "Other bridge hit",
+        "A new GPU",
+        "Release day",
+    ]
+    menv.drop(batch([item(n, title=t) for n, t in enumerate(titles, 1)]))
+    await menv.svc.ingest()
+    menv.answers = ["1 2 2\n2 9 2\n3 6 1\n4 7 1\n5 8 1"]  # [1] is item 5
+    assert await menv.step() is True
+    menv.answers = []
+    assert await menv.step() is False  # 4 new >= 5: fewer than 8, and they have not waited
+    menv.now = NOW + timedelta(minutes=21)
+    menv.answers = ["1, 2\n3, 9\n", '{"i": 1, "why": "x"}']
+    assert await menv.step() is True
+    user = menv.llama.chats[-1]["messages"][1]["content"]
+    assert "same specific event" in user and "Release day" not in user  # score 2: not asked
+    t = await menv.by_title()
+    lead, dup = t["Bridge hit in the night"], t["Éjjel találat érte a hidat"]
+    assert dup.dup_of == lead.id and lead.score == 8 and t["Other bridge hit"].dup_of is None
+    assert all(r.grouped_at is not None for r in t.values() if (r.score or 0) >= 5)
+    data, _ = await menv.svc.items()
+    assert {d["title"]: d["sources"] for d in data}["Bridge hit in the night"] == 2
+    # a later item joins the known story; the better score moves to the lead
+    menv.now += timedelta(minutes=30)
+    menv.drop(batch([item(7, title="Bridge strike: more details")], at=menv.now))
+    await menv.svc.ingest()
+    menv.answers = ["1 9 1"]
+    assert await menv.step() is True
+    menv.now += timedelta(minutes=21)
+    # the new one first in the prompt, then the known stories best first: GPU, bridge, other
+    menv.answers = ["3, 1"]
+    assert await menv.step() is True
+    t = await menv.by_title()
+    lead = t["Bridge hit in the night"]
+    assert t["Bridge strike: more details"].dup_of == lead.id and lead.score == 9
+    assert [o["title"] for o in (await menv.svc.item(lead.id))["others"]] == [
+        "Éjjel találat érte a hidat",
+        "Bridge strike: more details",
+    ]
+
+
+@pg
+async def test_whys_setup_and_push(menv: ModelEnv) -> None:
+    menv.now = datetime(2026, 11, 17, 8, 0, tzinfo=UTC)  # 09:00 in Budapest
+    rel = item(
+        1,
+        "tool",
+        title="b10",
+        kind="release",
+        publisher="Release notes from tool",
+        published=iso(menv.now),
+    )
+    menv.drop(
+        batch([rel, item(2, "t-news", title="A big launch", published=iso(menv.now))], at=menv.now)
+    )
+    await menv.svc.ingest()
+    menv.answers = ["1 9 2\n2 6 2"]  # [1] is the launch
+    assert await menv.step() is True
+    menv.now += timedelta(minutes=21)
+    menv.answers = [
+        "none",
+        '{"i": 1, "topic": "tech", "why": "Nagy bejelentés.", "setup": false}\n'
+        '{"i": 2, "topic": "orienteering", "why": "Új kiadás.", "setup": false}',
+    ]
+    assert await menv.step() is True  # grouping: none
+    assert await menv.step() is True  # why, best score first
+    t = await menv.by_title()
+    launch, release = t["A big launch"], t["tool: b10"]
+    assert (launch.why, launch.setup, launch.topic_id) == ("Nagy bejelentés.", False, "tech")
+    assert (release.why, release.setup, release.topic_id) == ("Új kiadás.", True, "orienteering")
+    assert menv.pushed == [launch.id]  # score 9 with a why, pushed right after the step
+    assert (await menv.svc.item(launch.id))["why"] == "Nagy bejelentés."
+    assert await menv.svc.push_due() == 0  # once
+
+
+@pg
+async def test_push_hours_and_daily_limit(menv: ModelEnv) -> None:
+    night = datetime(2026, 11, 17, 22, 30, tzinfo=UTC)  # 23:30 in Budapest
+    menv.now = night
+    menv.drop(
+        batch(
+            [item(n, title=f"Must read number {n}", published=iso(night)) for n in range(1, 5)],
+            at=night,
+        )
+    )
+    await menv.svc.ingest()
+    async with menv.db() as s:
+        await s.execute(update(NewsItem).values(score=9, why="Fontos."))
+        await s.commit()
+    assert await menv.svc.push_due() == 0  # night: waits
+    menv.now = datetime(2026, 11, 18, 5, 59, tzinfo=UTC)  # 06:59: before the digest at 06:30?
+    assert await menv.svc.push_due() == 2  # 06:59 >= 06:30 (the imported digest time)
+    assert await menv.svc.push_due() == 0  # two a day
+    await menv.svc.update_settings({"push_max": 3})
+    assert await menv.svc.push_due() == 1
+    await menv.svc.update_settings({"push_max": 5, "push": False})
+    assert await menv.svc.push_due() == 0
+    await menv.svc.update_settings({"push": True})
+    menv.now = night + timedelta(hours=13)  # older than 12 hours: not pushed any more
+    assert await menv.svc.push_due() == 0
+    assert len(menv.pushed) == 3
+
+
+@pg
+async def test_the_weekly(menv: ModelEnv) -> None:
+    monday = datetime(2026, 11, 23, 5, 0, tzinfo=UTC)  # 06:00 in Budapest, before 06:30
+    for n, (days, score, read) in enumerate(
+        [(1, 8, False), (3, 9, False), (5, 6, True), (6, 4, False), (8, 9, False)], 1
+    ):
+        at = monday - timedelta(days=days)
+        menv.drop(batch([item(n, title=f"Story of the week {n}", published=iso(at))], at=at))
+        await menv.svc.ingest()
+        async with menv.db() as s:
+            row = (await s.execute(select(NewsItem).where(NewsItem.key == key(n)))).scalar_one()
+            row.score, row.read_at = score, (monday if read else None)
+            await s.commit()
+    menv.now = monday
+    assert (await menv.svc.digest())["weekly"] is None
+    menv.now = monday + timedelta(minutes=31)
+    assert (await menv.svc.digest())["weekly"] == {"count": 2}
+    data, nxt = await menv.svc.items(weekly=True)
+    assert [d["title"] for d in data] == ["Story of the week 2", "Story of the week 1"]
+    assert nxt is None
+    menv.now = monday + timedelta(days=1)
+    assert (await menv.svc.digest())["weekly"] is None
+
+
+def test_publisher_names() -> None:
+    raw = batch(
+        [
+            item(1, publisher="Scuttlebutt Sailing News: Providing sailing news for sailors"),
+            item(2, publisher="Ars: Short"),
+        ]
+    )
+    b = parse_batch(json.dumps(raw).encode())
+    assert [i.publisher for i in b.items] == ["Scuttlebutt Sailing News", "Ars: Short"]

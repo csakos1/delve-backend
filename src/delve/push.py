@@ -23,6 +23,9 @@ Kinds (every value is a string, as FCM requires):
   `severity, date, uptime_s, updates_count, open_incidents, llama_state, level_cm,
   lake_avg_cm`. Not for cards older than an hour (history on first ingest). Water goes to
   devices with `notify.water`, the brief to those with `notify.brief`.
+* `news` (N1b) - a must-read story: `item, title, publisher, topic, why, url, score`. At most
+  `push_max` a day, never between 22:00 and the digest time (the NewsService decides);
+  to devices with `notify.news` (off until the app has its channel, N2).
 
 Priority: every kind goes as HIGH. A NORMAL message waits while the phone dozes -
 screen off, lying still - until a maintenance window or until it wakes, so a 08:52 water
@@ -63,6 +66,8 @@ from delve.db.models import (
     Conversation,
     Device,
     Message,
+    NewsItem,
+    NewsTopic,
     PushLog,
     Run,
     Watch,
@@ -79,6 +84,7 @@ NOTIFY_DEFAULTS: Mapping[str, bool] = {
     "brief": False,
     "watches": True,
     "system": True,
+    "news": False,
 }
 ANSWERABLE = frozenset({"pending", "expired_in_hermes"})
 COMMAND_CHARS = 80  # N5: the notification shows the start of the command
@@ -90,6 +96,7 @@ RESOLVED_TTL_S = 24 * 3600
 RUN_DONE_TTL_S = 6 * 3600
 CARD_TTL_S = 12 * 3600
 WATCH_TTL_S = 24 * 3600
+NEWS_TTL_S = 12 * 3600
 SYSTEM_TTL_S = 6 * 3600
 WATCH_TITLE_CHARS = 120
 WATCH_REASON_CHARS = 240
@@ -365,7 +372,7 @@ def _fcm_error_code(r: httpx.Response) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Job:
-    kind: str  # "approval" | "run" | "card" | "watch" | "system"
+    kind: str  # "approval" | "run" | "card" | "watch" | "system" | "news"
     ref: str
     delay_s: float = 0.0
 
@@ -418,6 +425,11 @@ class PushService:
         if self.enabled:
             self._queue.put_nowait(_Job("watch", f"{item_id}:{change}"))
 
+    def news(self, item_id: int) -> None:
+        """A must-read story (N1b); called by the NewsService after its commit."""
+        if self.enabled:
+            self._queue.put_nowait(_Job("news", str(item_id)))
+
     def model_switch(self, state: str, *, to: str, back: str | None, at: str) -> None:
         """A model switch that did not work (M): "failed" - the previous model is loaded
         again, "down" - llama-server is not running. Called by the SystemService."""
@@ -456,6 +468,8 @@ class PushService:
                     await self._watch(job.ref)
                 elif job.kind == "system":
                     await self._system(job.ref)
+                elif job.kind == "news":
+                    await self._news(job.ref)
                 else:
                     await self._run_done(job.ref)
             except asyncio.CancelledError:
@@ -587,6 +601,26 @@ class PushService:
             "watches", "watch", f"{item.slug}:{item.item_id}:{change}", data, high=True,
             ttl_s=WATCH_TTL_S, collapse_key=f"watch:{item.slug}:{item.item_id}",
         )  # fmt: skip
+
+    async def _news(self, ref: str) -> None:
+        async with self._sm() as s:
+            item = await s.get(NewsItem, int(ref))
+            topic = await s.get(NewsTopic, item.topic_id) if item and item.topic_id else None
+        if item is None:
+            return
+        data = {
+            "kind": "news",
+            "item": str(item.id),
+            "title": clip(item.title, WATCH_TITLE_CHARS),
+            "publisher": clip(item.publisher, 80),
+            "topic": clip(topic.name if topic is not None else item.topic_id, 60),
+            "why": clip(item.why, WATCH_REASON_CHARS),
+            "url": item.url,
+            "score": _text(item.score),
+        }
+        await self._send(
+            "news", "news", ref, data, high=True, ttl_s=NEWS_TTL_S, collapse_key=f"news:{ref}"
+        )
 
     async def _system(self, ref: str) -> None:
         d = json.loads(ref)

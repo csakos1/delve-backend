@@ -117,7 +117,6 @@ def create_app(
             hit_retention_days=settings.watch_hit_retention_days,
             reject_retention_days=settings.watch_reject_retention_days,
         )
-        manager.side_work = watches.judge_one
         app.state.watches = watches
         ingester = CardIngester(
             sessionmaker,
@@ -165,8 +164,18 @@ def create_app(
             batch_dir=settings.news_batch_dir,
             poll_s=settings.news_poll_s,
             retention_days=settings.news_retention_days,
+            llama=llama,
+            notify=push.news,
+            idle_s=settings.news_idle_s,
+            call_timeout_s=settings.news_call_timeout_s,
         )
         app.state.news = news
+
+        async def side_work() -> bool:
+            """Between runs: a watcher's verdict first (it may be a hit), then News."""
+            return await watches.judge_one() or await news.work()
+
+        manager.side_work = side_work
         if run_worker:
             await system.start()  # before the worker: a held queue must not start a run
             await manager.start()

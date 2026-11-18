@@ -159,6 +159,15 @@ class Settings(BaseSettings):
     news_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
         default=30, validation_alias=_env("DELVE_NEWS_RETENTION_DAYS")
     )
+    # N1b: the model steps run between runs, and only after llama-server has had nothing
+    # to do for this long (an opencode or VS Code session talks to it directly: one slot,
+    # so a News request would push its prompt cache out). Seconds; the timeout of one call.
+    news_idle_s: Annotated[float, Field(ge=0, le=86400)] = Field(
+        default=180.0, validation_alias=_env("DELVE_NEWS_IDLE_S")
+    )
+    news_call_timeout_s: Annotated[float, Field(gt=0, le=600)] = Field(
+        default=120.0, validation_alias=_env("DELVE_NEWS_CALL_TIMEOUT_S")
+    )
     bind: str = Field(default="127.0.0.1:8700", validation_alias=_env("DELVE_BIND"))
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO", validation_alias=_env("DELVE_LOG_LEVEL")

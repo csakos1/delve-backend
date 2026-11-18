@@ -1,5 +1,5 @@
 {
-  "api_revision": 14,
+  "api_revision": 15,
   "rest": [
     {
       "method": "GET",
@@ -144,7 +144,8 @@
         "before",
         "limit",
         "saved",
-        "topic"
+        "topic",
+        "weekly"
       ]
     },
     {
@@ -728,7 +729,8 @@
       "updated_at": true,
       "state": true,
       "sources": true,
-      "failing": true
+      "failing": true,
+      "weekly": "{count}|null"
     },
     "news_topic": {
       "description": true,

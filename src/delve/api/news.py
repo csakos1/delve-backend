@@ -34,7 +34,8 @@ async def news_digest(request: Request, _device: Device) -> dict[str, Any]:
     """The Dashboard's News block: `top` (at most 4 unread stories of the last day, the
     best first - newest first until scoring exists), `new` (unread stories of the last day),
     `updated_at` (the collector's last batch), `state` (`empty` before the first batch),
-    `sources` (enabled feeds), `failing` (feeds that failed 3 times in a row)."""
+    `sources` (enabled feeds), `failing` (feeds that failed 3 times in a row), `weekly`
+    (`{count}` on Mondays from the digest time on, else null)."""
     return await _svc(request).digest()
 
 
@@ -44,11 +45,14 @@ async def news_items(
     _device: Device,
     topic: Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,31}$")] = None,
     saved: bool = False,
+    weekly: bool = False,
     before: Annotated[int | None, Query(ge=1)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict[str, Any]:
+    """Newest first; `saved=true` the saved ones; `weekly=true` the best unopened stories of
+    the last 7 days (one page, best first)."""
     data, next_before = await _svc(request).items(
-        topic=topic, saved=saved, before=before, limit=limit
+        topic=topic, saved=saved, weekly=weekly, before=before, limit=limit
     )
     return {"data": data, "next_before": next_before}
 

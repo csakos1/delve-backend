@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from delve.app import create_app
 from delve.auth import create_device, set_fcm_token
 from delve.config import Settings
-from delve.db.models import Device, PushLog
+from delve.db.models import Device, NewsItem, NewsTopic, PushLog
 from delve.push import (
     FcmClient,
     Presence,
@@ -123,6 +124,7 @@ def test_notify_settings_and_clip() -> None:
         "brief": False,
         "watches": True,
         "system": True,
+        "news": False,
     }
     got = notify_settings({"run_done": False, "water": "yes", "other": True})
     assert got == {
@@ -132,6 +134,7 @@ def test_notify_settings_and_clip() -> None:
         "brief": False,
         "watches": True,
         "system": True,
+        "news": False,
     }
     assert clip("  a \n b  ", 80) == "a b"
     assert clip("x" * 100, 80) == "x" * 79 + "…"
@@ -430,6 +433,37 @@ async def test_a_failed_model_switch_is_pushed(rig: Rig) -> None:
 
 
 @pg
+async def test_a_news_story_is_pushed_to_who_asked(rig: Rig) -> None:
+    async with rig.h.db() as s:
+        s.add(NewsTopic(id="tech", name="Tech"))
+        await s.flush()
+        item = NewsItem(key="k" * 32, topic_id="tech", kind="feed", title="A big launch",
+                        url="https://x.example/a", publisher="Pub", seen_at=datetime.now(UTC),
+                        norm_title="a big launch", score=9, why="Nagy bejelentés.")  # fmt: skip
+        s.add(item)
+        await s.commit()
+        item_id = item.id
+    rig.push.news(item_id)
+    await rig.drain()
+    assert rig.google.sends == []  # off by default until the app has its channel (N2)
+    async with rig.h.db() as s:
+        await s.execute(
+            update(Device).where(Device.id == rig.devices["pixel"]).values(notify={"news": True})
+        )
+        await s.commit()
+    rig.push.news(item_id)
+    rig.push.news(10_000)  # gone meanwhile: nothing
+    await rig.drain()
+    (msg,) = rig.google.sends
+    assert msg["token"] == "fcm-pixel" and msg["android"]["collapse_key"] == f"news:{item_id}"
+    assert msg["data"] == {
+        "kind": "news", "item": str(item_id), "title": "A big launch", "publisher": "Pub",
+        "topic": "Tech", "why": "Nagy bejelentés.", "url": "https://x.example/a", "score": "9",
+    }  # fmt: skip
+    assert ("news", str(item_id), True) in await rig.log()
+
+
+@pg
 async def test_run_done_despite_a_live_socket_but_not_for_short_runs(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -536,6 +570,7 @@ def test_devices_me_notify(client: TestClient, token: str) -> None:
         "brief": False,
         "watches": True,
         "system": True,
+        "news": False,
     }
 
     r = client.patch(
@@ -549,6 +584,7 @@ def test_devices_me_notify(client: TestClient, token: str) -> None:
         "brief": False,
         "watches": True,
         "system": True,
+        "news": False,
     }
     r = client.patch("/api/v1/devices/me", headers=_auth(token), json={"notify": {"water": True}})
     assert r.json()["notify"]["run_done"] is False and r.json()["notify"]["water"] is True
