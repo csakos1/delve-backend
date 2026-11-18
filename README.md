@@ -616,7 +616,7 @@ or `error` with `errors_in_row`); `failing` in the digest counts the feeds that 
 times in a row. Stories older than `DELVE_NEWS_RETENTION_DAYS` go, saved ones stay.
 
 `news_digest`: `top` (at most 4 unread lead stories of the last 24 hours, the best score
-first, then the newest), `new` (how many unread there are), `updated_at` (the last batch),
+first, then the newest - one per topic while other topics have one to show), `new` (how many unread there are), `updated_at` (the last batch),
 `state` (`empty` before the first batch, else `ok`), `sources`, `failing`, `weekly`
 (`{count}` on Mondays from `digest_at` on - the Dashboard's "Last week" row - else null).
 `summary_hu` stays null until N1c.
@@ -631,17 +631,26 @@ did not move (our own requests do not count). One step at a time, the first that
 1. **score** - up to 12 unscored lead stories of the last 48 hours, newest first: `<item>
    <score 0-9> <topic number>` per line against the enabled topics' descriptions and
    `setup`; the topic the model picks replaces the feed's. An item left out three times
-   gets 0.
-2. **group** - the stories scored 5 or more in the last 36 hours that were not compared yet
-   (once there are 8, or the oldest waited 20 minutes), with the known ones of those days:
-   the items about *the same specific event* (also across Hungarian and English) become one
-   story under its earliest item (`dup_of`, the others listed in the story view), with the
-   best score of the group. Stories kept apart once are not merged by a later answer alone.
+   gets 0. A release row is not asked: it gets 6 (good to know) by rule.
+2. **group** - up to 16 stories scored 5 or more in the last 36 hours that were not
+   compared yet (once there are 8, or the oldest waited 20 minutes), with up to 24 others
+   of those days - first the ones whose titles share words with the new ones (names,
+   numbers; rarer words count more), then the ones of the same topics: the items about *the
+   same specific event* (also across Hungarian and English) become one story under its
+   earliest item (`dup_of`, the others listed in the story view), with the best score of
+   the group. Stories kept apart once are not merged by a later answer alone. Release rows
+   are not grouped.
 3. **why** - up to 5 stories scored 5 or more after grouping, best first: the topic, a
    Hungarian "why" of at most 12 words, and `setup` (a release row is always `true`: the
    reader's own tools).
 
 A failed call (llama down, no usable line) counts a try and pauses the steps for a minute.
+A step that waits for llama (in use, or unavailable) logs `news waiting` after half an hour
+and then every half hour.
+
+After a topic's description changed, `sudo delve news rescore [--hours 1-48]` sends the
+stories of those hours through the three steps again (from their feed's topic; merged
+duplicates, pushes, read / saved / feedback stay).
 
 **Push** (`news`): a story with score 9 and a why, from the last 12 hours, not opened, at
 most `push_max` a day, between `digest_at` and 22:00 (later ones wait for the morning) - to

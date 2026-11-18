@@ -5,9 +5,10 @@ the ones the N0 / N0b fixtures measured on the user's machine (Qwen3.8-27B, no t
 
 - **score** - a batch of items, one line each: `<item> <score 0-9> <topic number>`
   (N0b: AUC 0.81, P@10 0.9 with the v2 topic descriptions);
-- **group** - the best stories of the last day and a half: which report *the same
-  specific event* (N0b grouped the same bridge attack in Hungarian and English, but also
-  put different events of one topic together - the prompt now says so, with an example);
+- **group** - the new good stories and the known ones that look related: which report
+  *the same specific event* (N0b grouped the same bridge attack in Hungarian and English,
+  but also put different events of one topic together; live, the news around one game's
+  launch went into one story - the prompt says so, with examples);
 - **why** - the stories worth showing: topic, a Hungarian "why" of at most 12 words, and
   whether it touches the reader's own setup (N0b: 15/15 Hungarian with the example).
 
@@ -104,9 +105,11 @@ def group_body(system: str, items: Sequence[Candidate]) -> dict[str, Any]:
     user = (
         "Some of these items may report the same specific event, possibly in different "
         "languages (Hungarian and English) or from different angles. Group only items about "
-        "the same specific event - not items that merely share a topic, a company or a "
-        "place. Example: two reports of one attack on one bridge are a group; attacks on two "
-        "different bridges are not; two different lawsuits against one company are not.\n"
+        "the same specific event - not items that merely share a topic, a company, a "
+        "person, a product or a place. Example: two reports of one attack on one bridge are "
+        "a group; attacks on two different bridges are not; two different lawsuits against "
+        "one company are not; a game's release date, its sales figures and a court case "
+        "about it are three different events, even on the same day.\n"
         "Answer with one line per group of two or more items: the item numbers separated by "
         "commas. If there are no such groups, answer: none\n\n"
         + "\n".join(_item_line(n, c, excerpt=False) for n, c in enumerate(items, 1))

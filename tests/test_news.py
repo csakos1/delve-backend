@@ -32,8 +32,10 @@ from delve.news import (
     check_topic,
     fold_title,
     parse_batch,
+    pick_related,
     release_title,
     source_id_for,
+    title_words,
 )
 from delve.news_model import (
     Candidate,
@@ -404,6 +406,15 @@ async def test_a_day_of_releases_is_one_row(env_: Env) -> None:
     assert row.url.endswith("/b12") and row.publisher == "tool"
     assert [r["tag"] for r in row.releases or []] == ["b12", "b11", "b10"]
     assert row.seen_at == NOW + timedelta(minutes=5)
+    # good to know by rule, never grouped; a new release of the day asks a new why
+    assert (row.score, row.grouped_at is not None) == (6, True)
+    async with env_.db() as s:
+        await s.execute(update(NewsItem).values(why="Régi.", why_attempts=1))
+        await s.commit()
+    env_.drop(batch([rel(5, "b14", 5)], at=NOW + timedelta(minutes=10)))
+    await env_.svc.ingest()
+    (row,) = await env_.rows()
+    assert (row.why, row.why_attempts, row.score) == (None, 0, 6)
     # the next day is another row
     env_.drop(batch([rel(4, "b13", -24 * 60)], at=NOW + timedelta(days=1)))
     assert await env_.svc.ingest() == 1
@@ -602,6 +613,10 @@ def test_cli_import_and_export(
     assert cli.main(["news", "import"]) == 2
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert cli.main(["news", "import"]) == 2
+    assert cli.main(["news", "rescore", "--hours", "12"]) == 0
+    assert "0 stories of the last 12 hours will be scored again" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        cli.main(["news", "rescore", "--hours", "49"])
 
 
 # --- REST --------------------------------------------------------------------------------------
@@ -642,7 +657,7 @@ def test_routes(ndirs: tuple[Path, Path], client: TestClient, token: str) -> Non
     assert (bad.status_code, bad.json()["detail"]["code"]) == (422, "invalid_url")
     # a batch, read by hand (the poll loop is off in the tests)
     (batch_dir / "batch-20261117T120000Z-1.json").write_text(
-        json.dumps(batch([item(1, "t-news", published=None)]))
+        json.dumps(batch([item(1, "t-news", published=None)], at=datetime.now(UTC)))
     )
     assert client.portal is not None
     assert client.portal.call(client.app.state.news.ingest) == 1  # type: ignore[attr-defined]
@@ -861,8 +876,9 @@ async def test_grouping_merges_the_same_event(menv: ModelEnv) -> None:
     menv.answers = ["1 9 1"]
     assert await menv.step() is True
     menv.now += timedelta(minutes=21)
-    # the new one first in the prompt, then the known stories best first: GPU, bridge, other
-    menv.answers = ["3, 1"]
+    # the new one first in the prompt, then the known stories sharing a word ("bridge") best
+    # first, then the rest of the topic: bridge, other, GPU
+    menv.answers = ["2, 1"]
     assert await menv.step() is True
     t = await menv.by_title()
     lead = t["Bridge hit in the night"]
@@ -888,20 +904,28 @@ async def test_whys_setup_and_push(menv: ModelEnv) -> None:
         batch([rel, item(2, "t-news", title="A big launch", published=iso(menv.now))], at=menv.now)
     )
     await menv.svc.ingest()
-    menv.answers = ["1 9 2\n2 6 2"]  # [1] is the launch
+    menv.answers = ["1 9 2"]  # the release row is not asked: 6 by rule
     assert await menv.step() is True
+    assert "b10" not in menv.llama.chats[-1]["messages"][1]["content"]
     menv.now += timedelta(minutes=21)
     menv.answers = [
         "none",
         '{"i": 1, "topic": "tech", "why": "Nagy bejelentés.", "setup": false}\n'
         '{"i": 2, "topic": "orienteering", "why": "Új kiadás.", "setup": false}',
     ]
-    assert await menv.step() is True  # grouping: none
+    assert await menv.step() is True  # grouping: none (the launch only)
+    assert "b10" not in menv.llama.chats[-1]["messages"][1]["content"]
     assert await menv.step() is True  # why, best score first
     t = await menv.by_title()
     launch, release = t["A big launch"], t["tool: b10"]
     assert (launch.why, launch.setup, launch.topic_id) == ("Nagy bejelentés.", False, "tech")
-    assert (release.why, release.setup, release.topic_id) == ("Új kiadás.", True, "orienteering")
+    # a release row keeps its feed's topic and is about the setup by rule
+    assert (release.why, release.setup, release.topic_id, release.score) == (
+        "Új kiadás.",
+        True,
+        "tech",
+        6,
+    )
     assert menv.pushed == [launch.id]  # score 9 with a why, pushed right after the step
     assert (await menv.svc.item(launch.id))["why"] == "Nagy bejelentés."
     assert await menv.svc.push_due() == 0  # once
@@ -968,3 +992,114 @@ def test_publisher_names() -> None:
     )
     b = parse_batch(json.dumps(raw).encode())
     assert [i.publisher for i in b.items] == ["Scuttlebutt Sailing News", "Ars: Short"]
+
+
+def test_related_stories_for_grouping() -> None:
+    assert title_words("The Ukraine bridge attack: 2 dead, Rubin GPU") == {
+        "ukraine", "bridge", "attack", "dead", "rubin",
+    }  # fmt: skip
+    assert "b12" in title_words("llama.cpp b12 out") and "the" not in title_words("the end")
+    new = [(1, "Nvidia unveils Rubin GPU", "hardware"), (2, "Kerch bridge struck", "world")]
+    pool = [
+        (10, "GTA VI release date", "games"),  # best first: the pool's order
+        (11, "Weather in Siófok", "world"),
+        (12, "Rubin: Nvidia's new HPC chip", "tech"),  # two shared words
+        (13, "Nvidia earnings", "hardware"),  # one common word
+        (14, "Ukraine says the Kerch bridge collapsed", "world"),
+        (15, "Another hardware deal", "hardware"),
+    ]
+    assert pick_related(new, pool, 3) == [14, 12, 13]  # two rare words beat a rare + a common
+    # then the same topics, then the rest, in the pool's order
+    assert pick_related(new, pool, 10) == [14, 12, 13, 11, 15, 10]
+    assert pick_related(new, pool, 0) == []
+
+
+@pg
+async def test_grouping_meets_stories_of_other_batches(menv: ModelEnv) -> None:
+    """A story compared before comes back when a new one shares words with it, ahead of
+    better known stories that do not (the live backlog left one event in three pieces)."""
+    fillers = [item(n, title=f"Filler story number {n}") for n in range(10, 55)]
+    menv.drop(batch([*fillers, item(1, title="Nvidia Rubin GPU unveiled")]))
+    await menv.svc.ingest()
+    async with menv.db() as s:  # all scored and compared already; the fillers better
+        await s.execute(update(NewsItem).values(score=8, scored_at=NOW, grouped_at=NOW))
+        await s.execute(update(NewsItem).where(NewsItem.key == key(1)).values(score=6))
+        await s.commit()
+    menv.now = NOW + timedelta(minutes=30)
+    menv.drop(batch([item(2, title="Rubin: the HPC chip of Nvidia")], at=menv.now))
+    await menv.svc.ingest()
+    menv.answers = ["1 7 1"]
+    assert await menv.step() is True
+    menv.now += timedelta(minutes=21)
+    menv.answers = ["1, 2"]
+    assert await menv.step() is True
+    lines = [
+        ln for ln in menv.llama.chats[-1]["messages"][1]["content"].splitlines()
+        if ln.startswith("[")
+    ]  # fmt: skip
+    assert len(lines) == 40
+    assert lines[0].startswith("[1] Rubin: the HPC chip of Nvidia")
+    assert lines[1].startswith("[2] Nvidia Rubin GPU unveiled")
+    t = await menv.by_title()
+    lead = t["Nvidia Rubin GPU unveiled"]
+    assert t["Rubin: the HPC chip of Nvidia"].dup_of == lead.id and lead.score == 7
+
+
+@pg
+async def test_the_dashboard_block_one_story_a_topic(env_: Env) -> None:
+    env_.drop(batch([item(n, "o-news" if n < 5 else "t-news") for n in range(1, 7)]))
+    await env_.svc.ingest()
+    t = {r.key: r for r in await env_.rows()}
+    async with env_.db() as s:
+        for n, score in ((1, 9), (2, 9), (3, 8), (4, 7), (5, 5), (6, 3)):
+            await s.execute(update(NewsItem).where(NewsItem.id == t[key(n)].id).values(score=score))
+        await s.commit()
+    top = [i["id"] for i in (await env_.svc.digest())["top"]]
+    # one orienteering 9, the tech 5, then the best left: the other 9 and the 8; rank order
+    assert top == [t[key(1)].id, t[key(2)].id, t[key(3)].id, t[key(5)].id]
+
+
+@pg
+async def test_a_long_wait_is_logged(menv: ModelEnv, caplog: pytest.LogCaptureFixture) -> None:
+    menv.drop(batch([item(1)]))
+    await menv.svc.ingest()
+    caplog.set_level("INFO", logger="delve.news")
+    for _ in range(40):  # used all the time: half an hour and more
+        menv.llama.add(tokens_predicted_total=10)
+        menv.mono.t += 60
+        assert await menv.svc.work() is False
+    waits = [r for r in caplog.records if r.getMessage() == "news waiting"]
+    assert [(r.reason, r.minutes) for r in waits] == [("in use", 30)]  # type: ignore[attr-defined]
+    menv.llama.chat_status = 200
+    menv.mono.t += 200
+    menv.answers = ["1 5 1"]
+    assert await menv.svc.work() is True
+
+
+@pg
+async def test_rescore(menv: ModelEnv) -> None:
+    rel = item(3, "tool", title="b1", kind="release", publisher="tool", published=iso(NOW))
+    menv.drop(batch([item(1, "t-news"), item(2, "o-news"), rel]))
+    await menv.svc.ingest()
+    menv.answers = ["1 7 1\n2 9 1"]  # both to orienteering
+    assert await menv.step() is True
+    t = await menv.by_title()
+    lead = t["Story number 1 about something"]
+    async with menv.db() as s:
+        await s.execute(
+            update(NewsItem)
+            .where(NewsItem.id == lead.id)
+            .values(why="x", grouped_at=NOW, read_at=NOW, pushed_at=NOW)
+        )
+        await s.commit()
+    with pytest.raises(NewsError):
+        await menv.svc.rescore(49)
+    menv.now = NOW + timedelta(hours=1)
+    assert await menv.svc.rescore(48) == 2
+    t = await menv.by_title()
+    lead = t["Story number 1 about something"]
+    assert (lead.score, lead.why, lead.grouped_at, lead.topic_id) == (None, None, None, "tech")
+    assert lead.read_at is not None and lead.pushed_at is not None
+    assert t["tool: b1"].score == 6
+    menv.now = NOW + timedelta(hours=3)
+    assert await menv.svc.rescore(1) == 0

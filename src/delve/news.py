@@ -32,6 +32,7 @@ import re
 import time
 import unicodedata
 import urllib.parse
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -97,6 +98,8 @@ SCORE_MAX_ATTEMPTS = 3
 GROUP_MIN_SCORE = 5
 GROUP_WINDOW = timedelta(hours=36)
 GROUP_MAX_ITEMS = 40
+GROUP_NEW_MAX = 16  # the rest of the 40: the known stories that look related
+GROUP_POOL_MAX = 1000
 GROUP_MIN_NEW = 8  # or the oldest new one waited GROUP_MAX_WAIT
 GROUP_MAX_WAIT = timedelta(minutes=20)
 WHY_MIN_SCORE = 5
@@ -108,6 +111,9 @@ PUSH_WINDOW = timedelta(hours=12)  # a story older than this is not pushed any m
 PUSH_UNTIL_HOUR = 22  # pushes wait from 22:00 until digest_at
 WEEKLY_TOP = 10
 WEEKLY_MIN_SCORE = 5
+RELEASE_SCORE = 6  # a day of releases is good to know, not a must-read: a rule, not llama
+WAIT_LOG_S = 1800.0  # a News step that waits for llama says so this often (N342)
+RESCORE_MAX_HOURS = 48  # = SCORE_WINDOW: older stories would not be scored again
 SETTINGS_KEY = "news"
 DEFAULT_SETTINGS: dict[str, Any] = {"setup": "", "digest_at": "07:00", "push": True,
                                     "push_max": 2}  # fmt: skip
@@ -133,6 +139,53 @@ def fold_title(title: str) -> str:
     s = unicodedata.normalize("NFKD", title.lower())
     s = "".join(c if c.isalnum() else " " for c in s if not unicodedata.combining(c))
     return " ".join(s.split())
+
+
+_STOP_WORDS = (
+    "the and for with from that this into over after before about have has will says said "
+    "than what when where your their more most just also been were they them amid ahead news "
+    "live update updates video report reports first here there which while could would "
+    "should other years year week today hogy volt lesz csak mint utan elott alatt szerint "
+    "akkor most majd lehet kell ujabb ismet miatt ellen kozott amely mert minden"
+)
+_STOP = frozenset(_STOP_WORDS.split())
+
+
+def title_words(title: str) -> set[str]:
+    """The words of a title that can tie two stories together (names, numbers)."""
+    return {
+        w
+        for w in fold_title(title).split()
+        if w not in _STOP and (len(w) >= 4 or (len(w) >= 2 and any(c.isdigit() for c in w)))
+    }
+
+
+def pick_related(
+    new: Sequence[tuple[int, str, str | None]],
+    pool: Sequence[tuple[int, str, str | None]],
+    room: int,
+) -> list[int]:
+    """Which known stories (id, title, topic) go into a grouping with the new ones: first
+    those sharing words with a new title (a word in fewer titles counts more), then the
+    ones of the same topics, then the rest - in the pool's order (best first)."""
+    if room <= 0:
+        return []
+    words = {i: title_words(t) for i, t, _ in [*new, *pool]}
+    df = Counter(w for ws in words.values() for w in ws)
+    wanted: set[str] = set()
+    for i, _, _ in new:
+        wanted |= words[i]
+    ranked = []
+    for n, (i, _, _) in enumerate(pool):
+        weight = sum(1 / df[w] for w in words[i] & wanted)
+        if weight > 0:
+            ranked.append((-weight, n, i))
+    picked = [i for _, _, i in sorted(ranked)][:room]
+    taken = set(picked)
+    topics = {topic for _, _, topic in new}
+    rest = [i for i, _, t in pool if i not in taken and t in topics]
+    rest += [i for i, _, t in pool if i not in taken and t not in topics]
+    return picked + rest[: room - len(picked)]
 
 
 def release_label(publisher: str | None, source_id: str) -> str:
@@ -532,6 +585,9 @@ class NewsService:
         self._retry_at = 0.0
         self._seen_total: float | None = None  # llama's token counters, last seen
         self._active_at = monotonic()  # when llama was last seen busy (start: now)
+        self._wait_reason = "in use"
+        self._waiting_since: float | None = None  # a step is due, llama is not free
+        self._wait_logged = 0.0
 
     # --- lifecycle ------------------------------------------------------------------------
 
@@ -718,7 +774,8 @@ class NewsService:
                     key=key, source_id=src.id, topic_id=src.topic_id, kind="release",
                     title=release_title(label, releases), url=it.url, publisher=label,
                     excerpt=it.excerpt, published_at=it.published, seen_at=seen, gn=False,
-                    norm_title=fold_title(key), releases=releases,
+                    norm_title=fold_title(key), releases=releases, score=RELEASE_SCORE,
+                    scored_at=seen, grouped_at=seen,
                 )
             )  # fmt: skip
             await s.flush()
@@ -734,6 +791,7 @@ class NewsService:
         row.url = known[0]["url"]
         row.published_at = _parse_ts(known[0].get("published_at")) or row.published_at
         row.seen_at = seen
+        row.why, row.why_attempts = None, 0  # the why may name the newest one
         await s.flush()
         return 0
 
@@ -748,9 +806,12 @@ class NewsService:
         async with self._sm() as s:
             step = await self._next_step(s)
         if step is None:
+            self._waiting_since = None
             return False
         if not await self._llama_idle():
+            self._note_wait()
             return False
+        self._waiting_since = None
         kind, rows = step
         started = self._mono()
         try:
@@ -783,7 +844,9 @@ class NewsService:
             m = await self._llama.metrics()
         except LlamaUnavailable:
             self._retry_at = self._mono() + FAIL_BACKOFF_S
+            self._wait_reason = "unavailable"
             return False
+        self._wait_reason = "in use"
         total = m.get("prompt_tokens_total", 0.0) + m.get("tokens_predicted_total", 0.0)
         now = self._mono()
         if busy or total != self._seen_total:
@@ -791,6 +854,22 @@ class NewsService:
             self._active_at = now
             return False
         return now - self._active_at >= self._idle_s
+
+    def _note_wait(self) -> None:
+        """A long wait shows in the log: once after half an hour, then every half hour."""
+        now = self._mono()
+        if self._waiting_since is None:
+            self._waiting_since = self._wait_logged = now
+            return
+        if now - self._wait_logged >= WAIT_LOG_S:
+            self._wait_logged = now
+            log.info(
+                "news waiting",
+                extra={
+                    "reason": self._wait_reason,
+                    "minutes": int((now - self._waiting_since) // 60),
+                },
+            )
 
     async def _own_use(self) -> None:
         """Our own request does not count as somebody using llama."""
@@ -811,6 +890,7 @@ class NewsService:
                     self._base()
                     .where(
                         live,
+                        NewsItem.kind == "feed",
                         NewsItem.score.is_(None),
                         NewsItem.score_attempts < SCORE_MAX_ATTEMPTS,
                         NewsItem.seen_at >= now - SCORE_WINDOW,
@@ -823,7 +903,10 @@ class NewsService:
         if rows:
             return "score", rows
         fresh = and_(
-            live, NewsItem.score >= GROUP_MIN_SCORE, NewsItem.seen_at >= now - GROUP_WINDOW
+            live,
+            NewsItem.kind == "feed",  # a release row is a day of one feed: nothing to merge
+            NewsItem.score >= GROUP_MIN_SCORE,
+            NewsItem.seen_at >= now - GROUP_WINDOW,
         )
         new = list(
             (
@@ -831,24 +914,31 @@ class NewsService:
                     self._base()
                     .where(fresh, NewsItem.grouped_at.is_(None))
                     .order_by(NewsItem.id)
-                    .limit(GROUP_MAX_ITEMS)
+                    .limit(GROUP_NEW_MAX)
                 )
             ).scalars()
         )
         waited = bool(new) and min(r.scored_at or now for r in new) <= now - GROUP_MAX_WAIT
         if new and (len(new) >= GROUP_MIN_NEW or waited):
-            room = GROUP_MAX_ITEMS - len(new)
-            known = list(
+            # the others of the day and a half (compared before or not yet), the related
+            # ones first: a story from another batch of the day must meet its pair (N339)
+            pool = list(
                 (
                     await s.execute(
                         self._base()
-                        .where(fresh, NewsItem.grouped_at.is_not(None))
+                        .where(fresh, NewsItem.id.not_in([r.id for r in new]))
                         .order_by(NewsItem.score.desc(), NewsItem.id.desc())
-                        .limit(room)
+                        .limit(GROUP_POOL_MAX)
                     )
                 ).scalars()
-            ) if room > 0 else []  # fmt: skip
-            return "group", new + known
+            )
+            ids = pick_related(
+                [(r.id, r.title, r.topic_id) for r in new],
+                [(r.id, r.title, r.topic_id) for r in pool],
+                GROUP_MAX_ITEMS - len(new),
+            )
+            by_id = {r.id: r for r in pool}
+            return "group", new + [by_id[i] for i in ids]
         rows = list(
             (
                 await s.execute(
@@ -967,9 +1057,10 @@ class NewsService:
                     row.why_attempts += 1
                     continue
                 row.why = w.why
-                # releases of the reader's own tools concern his setup by rule (N328)
+                # releases of the reader's own tools concern his setup by rule (N328), and
+                # stay in their feed's topic
                 row.setup = True if row.kind == "release" else w.setup
-                if w.topic:
+                if w.topic and row.kind != "release":
                     row.topic_id = w.topic
             await s.commit()
         return tokens
@@ -1002,6 +1093,34 @@ class NewsService:
                     .values(why_attempts=NewsItem.why_attempts + 1)
                 )
             await s.commit()
+
+    async def rescore(self, hours: int) -> int:
+        """The stories of the last `hours` go through score, grouping and why again (after a
+        topic description changed), from their feed's topic. Merged duplicates stay merged,
+        a story is not pushed twice, read / saved / feedback stay. Release rows keep their
+        rule. The number of stories."""
+        if not 1 <= hours <= RESCORE_MAX_HOURS:
+            raise NewsError("bad_hours", f"hours: 1 - {RESCORE_MAX_HOURS}")
+        since = self._clock() - timedelta(hours=hours)
+        which = and_(NewsItem.kind == "feed", NewsItem.dup_of.is_(None), NewsItem.seen_at >= since)
+        feed_topic = (
+            select(NewsSource.topic_id).where(NewsSource.id == NewsItem.source_id).scalar_subquery()
+        )
+        async with self._sm() as s:
+            n = await s.scalar(select(func.count()).select_from(NewsItem).where(which))
+            await s.execute(
+                update(NewsItem)
+                .where(which)
+                .values(
+                    score=None, scored_at=None, score_attempts=0, why=None, why_attempts=0,
+                    setup=None, grouped_at=None,
+                    topic_id=func.coalesce(feed_topic, NewsItem.topic_id),
+                )
+                .execution_options(synchronize_session=False)
+            )  # fmt: skip
+            await s.commit()
+        log.info("news rescore", extra={"hours": hours, "items": int(n or 0)})
+        return int(n or 0)
 
     # --- push ----------------------------------------------------------------------------
 
@@ -1090,7 +1209,7 @@ class NewsService:
         async with self._sm() as s:
             recent = and_(self._visible(), NewsItem.seen_at >= since)
             unread = and_(recent, NewsItem.read_at.is_(None))
-            top = list(
+            best = list(
                 (
                     await s.execute(
                         self._base()
@@ -1100,10 +1219,11 @@ class NewsService:
                             func.coalesce(NewsItem.published_at, NewsItem.seen_at).desc(),
                             NewsItem.id.desc(),
                         )
-                        .limit(DIGEST_TOP)
+                        .limit(DIGEST_TOP * 10)
                     )
                 ).scalars()
             )
+            top = _one_per_topic(best, DIGEST_TOP)
             new = await s.scalar(
                 select(func.count())
                 .select_from(NewsItem)
@@ -1489,6 +1609,23 @@ def _write_file(tmp: Path, path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _one_per_topic(rows: list[NewsItem], n: int) -> list[NewsItem]:
+    """The best `n`, at most one of a topic while other topics have one to show (a big day
+    of one topic does not fill the Dashboard block); the order stays the rank."""
+    picked: list[int] = []
+    topics: set[str | None] = set()
+    for k, r in enumerate(rows):
+        if len(picked) < n and r.topic_id not in topics:
+            picked.append(k)
+            topics.add(r.topic_id)
+    for k in range(len(rows)):
+        if len(picked) >= n:
+            break
+        if k not in picked:
+            picked.append(k)
+    return [rows[k] for k in sorted(picked)]
 
 
 def _candidate(r: NewsItem) -> Candidate:
