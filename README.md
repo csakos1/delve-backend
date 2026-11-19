@@ -149,6 +149,7 @@ the desktop agent's instead.
 | `PATCH` | `/api/v1/schedules/{id}` | any of the fields above → `schedule`; the brief takes only `cron` and `enabled` (422 `brief_fields`) |
 | `DELETE` | `/api/v1/schedules/{id}` | → 204; the brief: 409 `brief_fixed` |
 | `POST` | `/api/v1/schedules/{id}/run` | fire once now (timing unchanged) → `{schedule, run_id, card_id}` |
+| `GET` | `/api/v1/schedules/{id}/runs?before=&limit=` | API 22: the schedule's runs, newest first → `{data: [schedule_run], next_before}` (`run` + `conversation_title`; `limit` 1–50, default 20; `before` the `queued_at` a page ends at; the brief writes cards, so its list is empty); 404 `schedule_not_found` |
 | `GET` | `/api/v1/stats?range=24h\|7d\|30d` | the Observability view (below); 422 for another range |
 | `POST` | `/api/v1/attachments?kind=image\|file&filename=` | the raw bytes as the body, the type in `Content-Type` → 201 `attachment`; 413 `too_large`, 415 `unsupported_image`, 422 `empty` |
 | `GET` | `/api/v1/attachments/{id}` | the bytes (images `inline`, files `attachment`); 404 `attachment_not_found`, 410 `attachment_gone` |

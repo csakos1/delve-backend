@@ -41,7 +41,7 @@ from delve.news import settings_out as news_settings_out
 from delve.news import source_out as news_source_out
 from delve.news import topic_out as news_topic_out
 from delve.persona import Persona, Section, Topic, persona_out, section_out, topic_out
-from delve.schedules import schedule_out
+from delve.schedules import schedule_out, schedule_run_out
 from delve.serialize import (
     approval_out,
     card_out,
@@ -142,6 +142,9 @@ def shapes() -> dict[str, Any]:
         "hermes_issue": _keys(issue),
         # B4: GET /api/v1/schedules items, schedule.updated
         "schedule": _keys(schedule_out(sched)),
+        # API 22: GET /api/v1/schedules/{id}/runs -> {data: [schedule_run], next_before}
+        # (newest first; the brief has none; conversation_title: null without a title)
+        "schedule_run": _keys(schedule_run_out(run)),
         # B4: the `payload` of a `brief` card (water: null when there was no reading)
         "brief_payload": brief_keys,
         "brief_incident": _keys(brief["incidents"][0]),

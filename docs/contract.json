@@ -1,5 +1,5 @@
 {
-  "api_revision": 21,
+  "api_revision": 22,
   "rest": [
     {
       "method": "GET",
@@ -271,6 +271,14 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/schedules/{schedule_id}/runs",
+      "query": [
+        "before",
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/stats",
       "query": [
         "range"
@@ -530,6 +538,21 @@
       "prompt": true,
       "thinking": true,
       "updated_at": true
+    },
+    "schedule_run": {
+      "conversation_id": true,
+      "conversation_title": true,
+      "ended_at": true,
+      "error": true,
+      "model": true,
+      "origin": true,
+      "perf": true,
+      "queued_at": true,
+      "run_id": true,
+      "started_at": true,
+      "status": true,
+      "thinking": true,
+      "usage": true
     },
     "brief_payload": {
       "booted_at": true,

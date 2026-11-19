@@ -1,15 +1,23 @@
-"""REST for schedules (B4): list, create, change, delete, run now."""
+"""REST for schedules (B4): list, create, change, delete, run now; a schedule's runs (API 22)."""
 
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 from delve.api.rest import Device
-from delve.schedules import InvalidSchedule, ScheduleConflict, ScheduleNotFound, ScheduleService
+from delve.schedules import (
+    RUNS_PAGE,
+    RUNS_PAGE_MAX,
+    InvalidSchedule,
+    ScheduleConflict,
+    ScheduleNotFound,
+    ScheduleService,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -99,5 +107,21 @@ async def delete_schedule(request: Request, _device: Device, schedule_id: uuid.U
 async def run_schedule(request: Request, _device: Device, schedule_id: uuid.UUID) -> dict[str, Any]:
     try:
         return await _svc(request).run_now(schedule_id)
+    except ScheduleNotFound as exc:
+        raise _missing() from exc
+
+
+@router.get("/schedules/{schedule_id}/runs")
+async def schedule_runs(
+    request: Request,
+    _device: Device,
+    schedule_id: uuid.UUID,
+    before: datetime | None = None,
+    limit: int = Query(RUNS_PAGE, ge=1, le=RUNS_PAGE_MAX),
+) -> dict[str, Any]:
+    if before is not None and before.tzinfo is None:
+        before = before.replace(tzinfo=UTC)
+    try:
+        return await _svc(request).runs(schedule_id, before=before, limit=limit)
     except ScheduleNotFound as exc:
         raise _missing() from exc

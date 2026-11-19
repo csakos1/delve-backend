@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from delve import protocol
+from delve import contract, protocol
 from delve.app import create_app
 from delve.auth import create_device, set_fcm_token
 from delve.brief import BriefService, brief_payload, brief_severity, open_incidents
@@ -25,6 +25,7 @@ from delve.push import Presence, PushService, notify_settings
 from delve.schedules import (
     InvalidSchedule,
     ScheduleConflict,
+    ScheduleNotFound,
     ScheduleService,
     check_cron,
     describe,
@@ -420,6 +421,36 @@ async def test_run_now_keeps_the_timing(sx: Env) -> None:
     assert second["schedule"]["next_run_at"] == out["next_run_at"]
 
 
+@pg
+async def test_runs_newest_first_paged_and_only_its_own(sx: Env) -> None:
+    out = await sx.svc.create(PROMPT)
+    other = await sx.svc.create({**PROMPT, "name": "Other"})
+    sid = uuid.UUID(out["id"])
+    first = await sx.svc.run_now(sid)
+    await sx.svc.run_now(uuid.UUID(other["id"]))
+    second = await sx.svc.run_now(sid)
+
+    page = await sx.svc.runs(sid)
+    assert [r["run_id"] for r in page["data"]] == [second["run_id"], first["run_id"]]
+    assert page["next_before"] is None
+    run = page["data"][0]
+    assert run["origin"] == "schedule" and "conversation_title" in run
+    assert set(run) == set(contract.shapes()["schedule_run"])
+
+    one = await sx.svc.runs(sid, limit=1)
+    assert [r["run_id"] for r in one["data"]] == [second["run_id"]]
+    assert one["next_before"] is not None
+    rest = await sx.svc.runs(sid, before=datetime.fromisoformat(one["next_before"]), limit=1)
+    assert [r["run_id"] for r in rest["data"]] == [first["run_id"]]
+    assert rest["next_before"] is None
+
+    brief = next(o for o in await sx.svc.list() if o["kind"] == "brief")
+    await sx.svc.run_now(uuid.UUID(brief["id"]))
+    assert (await sx.svc.runs(uuid.UUID(brief["id"])))["data"] == []
+    with pytest.raises(ScheduleNotFound):
+        await sx.svc.runs(uuid.uuid4())
+
+
 async def _seed_cards(db: async_sessionmaker[AsyncSession], now: datetime) -> None:
     async with db() as s:
         s.add_all([
@@ -653,6 +684,15 @@ def test_api_schedules(sched_client: tuple[TestClient, FakeHelper], token: str) 
     assert r.status_code == 200 and len(r.json()["card_id"]) == 32
     assert r.json()["schedule"]["last_status"] == "ok"
     assert c.post(f"/api/v1/schedules/{missing}/run", headers=a).status_code == 404
+
+    r = c.get(f"/api/v1/schedules/{sid}/runs", headers=a)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]) == 1 and r.json()["next_before"] is None
+    assert c.get(f"/api/v1/schedules/{sid}/runs", headers=a, params={"limit": 0}).status_code == 422
+    r = c.get(f"/api/v1/schedules/{sid}/runs", headers=a, params={"before": "2020-01-01T00:00:00"})
+    assert r.status_code == 200 and r.json()["data"] == []
+    assert c.get(f"/api/v1/schedules/{missing}/runs", headers=a).status_code == 404
+    assert c.get(f"/api/v1/schedules/{sid}/runs").status_code == 401
 
     r = c.delete(f"/api/v1/schedules/{brief['id']}", headers=a)
     assert (r.status_code, r.json()["detail"]["code"]) == (409, "brief_fixed")

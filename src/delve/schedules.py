@@ -42,7 +42,7 @@ from delve.brief import BriefService, brief_card_id
 from delve.db.models import Conversation, Run, Schedule
 from delve.events import EventHub
 from delve.runs.manager import MAX_INPUT_CHARS, NotFound, RunManager
-from delve.serialize import iso
+from delve.serialize import iso, run_out
 
 log = logging.getLogger("delve.schedules")
 
@@ -52,6 +52,8 @@ MODES = ("new", "fixed")
 NAME_MAX = 64
 MIN_GAP = timedelta(minutes=10)  # a schedule may not fire more often than this
 MAX_SCHEDULES = 50
+RUNS_PAGE = 20  # GET /schedules/{id}/runs: a page by default …
+RUNS_PAGE_MAX = 50  # … and at most
 BRIEF_NAME = "Morning brief"
 BRIEF_CRON = "30 7 * * *"  # N22: daily 07:30
 BRIEF_FIELDS = frozenset({"cron", "enabled"})
@@ -123,6 +125,27 @@ def run_message_id(schedule_id: uuid.UUID, due: datetime) -> uuid.UUID:
 # --- output --------------------------------------------------------------------------
 
 
+def schedule_run_out(r: Run, conversation_title: str | None = None) -> dict[str, Any]:
+    """One run of a prompt schedule (GET /schedules/{id}/runs, API 22): the run as
+    everywhere, with the title of its chat."""
+    return {**run_out(r), "conversation_title": conversation_title}
+
+
+async def _titles(s: AsyncSession, conv_ids: set[str]) -> dict[str, str | None]:
+    """A chat's title, or its preview while it has none."""
+    titles: dict[str, str | None] = {}
+    if conv_ids:
+        for cid, title, preview in (
+            await s.execute(
+                select(Conversation.id, Conversation.title, Conversation.preview).where(
+                    Conversation.id.in_(conv_ids)
+                )
+            )
+        ).all():
+            titles[cid] = title or preview
+    return titles
+
+
 @dataclass(frozen=True, slots=True)
 class LastRun:
     run_id: str
@@ -182,17 +205,7 @@ async def _render(s: AsyncSession, rows: list[Schedule]) -> list[dict[str, Any]]
         for sid, rid, status, conv, err in (await s.execute(q)).all():
             if sid is not None:
                 last[sid] = LastRun(rid, status, conv, err)
-    conv_ids = {r.conversation_id for r in rows if r.conversation_id}
-    titles: dict[str, str | None] = {}
-    if conv_ids:
-        for cid, title, preview in (
-            await s.execute(
-                select(Conversation.id, Conversation.title, Conversation.preview).where(
-                    Conversation.id.in_(conv_ids)
-                )
-            )
-        ).all():
-            titles[cid] = title or preview
+    titles = await _titles(s, {r.conversation_id for r in rows if r.conversation_id})
     return [schedule_out(r, last.get(r.id), titles.get(r.conversation_id or "")) for r in rows]
 
 
@@ -296,6 +309,29 @@ class ScheduleService:
             if sc is None:
                 raise ScheduleNotFound(str(schedule_id))
             return (await _render(s, [sc]))[0]
+
+    async def runs(
+        self, schedule_id: uuid.UUID, *, before: datetime | None = None, limit: int = RUNS_PAGE
+    ) -> dict[str, Any]:
+        """A schedule's runs, newest first, a page at a time (`before`: the `queued_at`
+        the page ends at, exclusive). The brief writes cards, not runs: its list is empty."""
+        limit = max(1, min(limit, RUNS_PAGE_MAX))
+        async with self._sm() as s:
+            sc = await s.get(Schedule, schedule_id)
+            if sc is None:
+                raise ScheduleNotFound(str(schedule_id))
+            q = select(Run).where(Run.schedule_id == schedule_id)
+            if before is not None:
+                q = q.where(Run.queued_at < before)
+            q = q.order_by(Run.queued_at.desc(), Run.run_id.desc()).limit(limit + 1)
+            rows = list((await s.execute(q)).scalars())
+            more = len(rows) > limit
+            rows = rows[:limit]
+            titles = await _titles(s, {r.conversation_id for r in rows})
+        return {
+            "data": [schedule_run_out(r, titles.get(r.conversation_id)) for r in rows],
+            "next_before": iso(rows[-1].queued_at) if more else None,
+        }
 
     # --- writes ----------------------------------------------------------------
 
