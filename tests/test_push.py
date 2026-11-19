@@ -27,6 +27,7 @@ from delve.auth import create_device, set_fcm_token
 from delve.config import Settings
 from delve.db.models import Device, NewsItem, NewsTopic, PushLog
 from delve.push import (
+    OUTBOX_SIZE,
     FcmClient,
     Presence,
     PushConfigError,
@@ -225,15 +226,38 @@ def test_presence() -> None:
     assert not p.live(dev)
 
 
+def test_presence_deliver() -> None:
+    now = [100.0]
+    p = Presence(stale_s=60, clock=lambda: now[0])
+    dev, other = uuid.uuid4(), uuid.uuid4()
+    a, b = p.enter(dev), p.enter(dev)
+    p.enter(other)
+    assert p.deliver(dev, {"type": "push", "data": {"kind": "x"}}) == 2
+    assert a.outbox.get_nowait() == b.outbox.get_nowait() == {"type": "push",
+                                                              "data": {"kind": "x"}}  # fmt: skip
+    now[0] += 61  # quiet sockets get nothing
+    assert p.deliver(dev, {"type": "push", "data": {}}) == 0
+    p.touch(a)
+    for _ in range(OUTBOX_SIZE):
+        p.deliver(dev, {"type": "push", "data": {}})
+    assert p.deliver(dev, {"type": "push", "data": {}}) == 0  # full: dropped
+    assert p.deliver(uuid.uuid4(), {"type": "push", "data": {}}) == 0
+
+
 def test_build_push(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     sm: Any = None
-    off = build_push(sm, Presence(), service_account_file=None, project_id=None, run_done_min_s=1)
+    off = build_push(sm, Presence(), service_account_file=None, project_id=None, run_done_min_s=1,
+                     socket_push=False)  # fmt: skip
     assert not off.enabled
+    # no FCM, but devices without a token still get theirs on the socket (L3)
+    sock = build_push(sm, Presence(), service_account_file=None, project_id=None,
+                      run_done_min_s=1)  # fmt: skip
+    assert sock.enabled and sock.fcm is None
     bad = tmp_path / "bad.json"
     bad.write_text("{}")
     broken = build_push(sm, Presence(), service_account_file=bad, project_id=None,
                         run_done_min_s=1)  # fmt: skip
-    assert not broken.enabled and "push disabled" in caplog.text
+    assert broken.fcm is None and "push disabled" in caplog.text
     good = tmp_path / "fcm.json"
     good.write_text(json.dumps(sa_dict()))
     on = build_push(sm, Presence(), service_account_file=good, project_id="other",
@@ -358,6 +382,65 @@ async def test_approval_push_then_resolved(rig: Rig) -> None:
         "status": "approved_once",
     }
     assert ("approval", rid, True) in await rig.log()
+
+
+@pg
+async def test_a_device_without_fcm_gets_pushes_on_its_socket(h: Harness) -> None:
+    """L3: the desktop app has no FCM token; its open socket gets the same data, the
+    phone still gets FCM only, a closed app or `notify` off gets nothing."""
+    google = FakeGoogle()
+    presence = Presence()
+    push = PushService(h.db, client_for(google), presence, run_done_min_s=0,
+                       approval_delay_s=0.05, socket_push=True)  # fmt: skip
+    h.hub.add_listener(push.listener)
+    pixel = await _device(h.db, "pixel", "fcm-pixel")
+    desk = await _device(h.db, "desk", None)
+    quiet = await _device(h.db, "desk-quiet", None, approvals=False, run_done=False)
+    closed = await _device(h.db, "desk-closed", None)
+    on_pixel, on_desk, on_quiet = presence.enter(pixel), presence.enter(desk), presence.enter(quiet)
+    await push.start()
+    try:
+        rid = _rid("protocol/c")
+        run_id = load_json("protocol/c.create.json")["run_id"]
+        h.fake.enqueue(
+            "protocol/c",
+            pause_before_seq=2,
+            approvals={rid: load_json(f"protocol/approval-once-{run_id}.json")},
+        )
+        conv_id, _ = await h.send("rm -r /tmp/x")
+        await h.mgr.start()
+        async with asyncio.timeout(5):
+            while on_desk.outbox.empty():  # noqa: ASYNC110
+                await asyncio.sleep(0.01)
+        frame = on_desk.outbox.get_nowait()
+        assert frame["type"] == "push"
+        data = frame["data"]
+        assert data["kind"] == "approval" and data["request_id"] == rid
+        assert data["conversation_id"] == conv_id and data["command"] == "rm -r /tmp/x"
+        # the same data as the phone's FCM message
+        (msg,) = google.approvals()
+        assert msg["token"] == "fcm-pixel" and msg["data"] == data
+        assert on_pixel.outbox.empty() and on_quiet.outbox.empty()
+
+        await ApprovalService(h.db, h.hermes, h.hub).respond(rid, "once", "pixel")
+        await h.settle()
+        async with asyncio.timeout(5):
+            await push.drain()
+        later = []
+        while not on_desk.outbox.empty():
+            later.append(on_desk.outbox.get_nowait()["data"])
+        assert {"kind": "approval_resolved", "request_id": rid,
+                "status": "approved_once"} in later  # fmt: skip
+        # the run went on after the answer: its run_done may be there too
+        assert {d["kind"] for d in later} <= {"approval_resolved", "run_done"}
+        async with h.db() as s:
+            rows = (await s.execute(select(PushLog).order_by(PushLog.id))).scalars().all()
+        by_device = {(r.device_id, r.kind, r.error) for r in rows if r.kind == "approval"}
+        assert (desk, "approval", "socket") in by_device
+        assert (pixel, "approval", None) in by_device
+        assert not any(r.device_id in (quiet, closed) for r in rows)
+    finally:
+        await push.close()
 
 
 @pg
@@ -622,3 +705,20 @@ def test_app_wiring_and_presence(push_client: tuple[TestClient, FakeGoogle], tok
             break
         time.sleep(0.01)
     assert not presence.live(device_id)
+
+
+@pg
+def test_a_push_frame_reaches_the_socket(client: TestClient, token: str) -> None:
+    """L3: a frame in the connection's outbox goes out on that socket (no seq)."""
+    app: Any = client.app
+    device_id = uuid.UUID(client.get("/api/v1/devices/me", headers=_auth(token)).json()["id"])
+    presence: Presence = app.state.presence
+    assert client.get("/api/v1/devices/me", headers=_auth(token)).json()["push"] is False
+    with client.websocket_connect("/api/v1/ws") as ws:
+        ws.send_json({"type": "hello", "data": {"device_token": token}})
+        assert ws.receive_json()["type"] == "hello.ok"
+        frame = {"type": "push", "data": {"kind": "news", "item": "7", "title": "t"}}
+        assert presence.deliver(device_id, frame) == 1
+        assert ws.receive_json() == frame
+        ws.send_json({"type": "ping", "id": 1, "data": {}})
+        assert ws.receive_json()["type"] == "pong"

@@ -188,7 +188,7 @@ def create_app(
             await news.start()
         log.info(
             "startup",
-            extra={"version": __version__, "bind": settings.bind, "push": push.enabled},
+            extra={"version": __version__, "bind": settings.bind, "push": push.fcm is not None},
         )
         try:
             yield

@@ -1,5 +1,5 @@
 {
-  "api_revision": 20,
+  "api_revision": 21,
   "rest": [
     {
       "method": "GET",
@@ -1104,7 +1104,8 @@
       "error",
       "hello.ok",
       "keepalive",
-      "pong"
+      "pong",
+      "push"
     ]
   }
 }

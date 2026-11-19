@@ -42,6 +42,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 18 | News (N1b): scoring, grouping and the Hungarian "why" between runs when llama is idle; push of the must-reads; the weekly | done |
 | 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
 | 20 | News for the app (N2, API 17-20): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more; a feed's newest story and a pushed story's number of sources for News settings and the notification (API 20) | done |
+| 21 | Pushes on the WebSocket for devices without an FCM token (the Linux desktop app, L3): the connection frame `push` with the same data | done |
 
 ## Development
 
@@ -208,7 +209,8 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
 `health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`),
-`watch.updated`, `watch.item`, `news.updated` (`{new, texts, updated_at}`), `error`, plus `keepalive` every 20 s. Close codes: 4400 protocol error, 4401 unauthorized,
+`watch.updated`, `watch.item`, `news.updated` (`{new, texts, updated_at}`), `error`, plus `keepalive` every 20 s, and
+`push` (API 21, see "Push notifications") on the socket of a device without an FCM token. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
 A run is queued as `q_<hex>` and renamed to the Hermes `run_<hex>` when it starts
@@ -512,12 +514,20 @@ dozes and arrives only when it wakes (or the app is opened).
 
 `title` is Hermes' title, else the conversation's first message. A new approval waits 1 s
 before it is pushed (a follow-up run's approval is answered automatically within
-milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`, `system`, `news`); revoked devices and devices without an FCM token get nothing.
+milliseconds). Each device chooses with `notify` (`approvals`, `run_done`, `water`, `brief`, `watches`, `system`, `news`); revoked devices get nothing.
 Whether the phone has a socket open does not matter: a phone locked a moment ago may
 still look connected here for up to a minute (its close never arrived), so the log line
 `push sent` only reports it (`socket`, live while a frame arrived within 60 s). An
 `UNREGISTERED` answer clears the device's FCM token; 429/5xx are retried 3 times. Every
 send is logged in `push_log`.
+
+**Devices without an FCM token** (the Linux desktop app; API 21) get the same `data` on
+their open WebSocket as a connection frame `{"type": "push", "data": {...}}` – no `seq`,
+never replayed, so a device whose app is closed gets nothing (the phone still gets its
+FCM push). This works without `FCM_SERVICE_ACCOUNT_FILE` too. A delivery is logged in
+`push_log` as `ok` with `error = "socket"` (the channel, not a failure) – so an approval
+that only went to a socket also gets its `approval_resolved`. Devices with a token get FCM
+only (an older phone app would log an unknown frame).
 
 ### Notification mirroring
 

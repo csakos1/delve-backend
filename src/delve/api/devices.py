@@ -97,7 +97,7 @@ def _device_out(request: Request, row: DeviceRow) -> dict[str, Any]:
         "created_at": iso(row.created_at),
         "last_seen_at": iso(row.last_seen_at),
         "fcm": row.fcm_token is not None,
-        "push": push.enabled,  # the server can send pushes (FCM is configured)
+        "push": push.fcm is not None,  # the server can send FCM pushes (configured)
         "notify": notify_settings(row.notify),
     }
 

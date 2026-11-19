@@ -82,7 +82,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         watermark = await _handshake(ws, hub, data, app.state)
         await _session(
             ws, sub, watermark, device, app.state.run_manager, sm, app.state.approvals,
-            lambda: presence.touch(conn),
+            lambda: presence.touch(conn), conn.outbox,
         )  # fmt: skip
     except WebSocketDisconnect:
         pass
@@ -133,12 +133,18 @@ async def _session(
     sm: async_sessionmaker[AsyncSession],
     approvals: ApprovalService,
     touch: Callable[[], None],
+    outbox: asyncio.Queue[dict[str, Any]] | None = None,
 ) -> None:
     async def pump() -> None:
         while True:
             env = await sub.queue.get()
             if env.seq > watermark:
                 await _send(ws, env.frame())
+
+    async def direct(box: asyncio.Queue[dict[str, Any]]) -> None:
+        # frames for this socket only: `push` to a device without FCM (the desktop app)
+        while True:
+            await _send(ws, await box.get())
 
     async def keepalive() -> None:
         while True:
@@ -155,6 +161,8 @@ async def _session(
         asyncio.create_task(keepalive()),
         asyncio.create_task(overflow_watch()),
     ]
+    if outbox is not None:
+        tasks.append(asyncio.create_task(direct(outbox)))
     try:
         while True:
             try:

@@ -37,7 +37,14 @@ that show nothing; each of these shows a notification or removes one it showed
 Who gets what is per device (`devices.notify`, `PATCH /api/v1/devices/me`). An
 `UNREGISTERED` answer clears the device's FCM token. Every send is logged in `push_log`.
 
-Without `FCM_SERVICE_ACCOUNT_FILE` pushing is off (development, tests).
+**Devices without an FCM token** (the Linux desktop app, L3; API 21) get the same data on
+their open WebSocket instead, as a connection frame `{"type": "push", "data": {...}}` -
+no `seq`, never replayed: a device whose app is closed gets nothing. Logged in `push_log`
+as `ok` with `error = "socket"` (the channel, not a failure), so `approval_resolved`
+follows an approval that only went to a socket. Devices with a token get FCM only.
+
+Without `FCM_SERVICE_ACCOUNT_FILE` there is no FCM; the socket path still works
+(`socket_push`, on in the app; the bare service in tests has neither).
 """
 
 from __future__ import annotations
@@ -138,10 +145,18 @@ def clip(text: str | None, limit: int) -> str:
 # --- presence --------------------------------------------------------------------------
 
 
+SOCKET = "socket"  # push_log.error of a delivery on the WebSocket (not a failure)
+OUTBOX_SIZE = 200
+
+
 @dataclass(eq=False)
 class Connection:
     device_id: uuid.UUID
     last_rx: float
+    # frames for this socket only (push to a desktop device); the WS session sends them
+    outbox: asyncio.Queue[dict[str, Any]] = field(
+        default_factory=lambda: asyncio.Queue(OUTBOX_SIZE)
+    )
 
 
 class Presence:
@@ -173,6 +188,21 @@ class Presence:
         return any(
             c.device_id == device_id and now - c.last_rx <= self.stale_s for c in self._conns
         )
+
+    def deliver(self, device_id: uuid.UUID, frame: dict[str, Any]) -> int:
+        """Queue `frame` on the device's live sockets; how many took it (a full outbox -
+        a socket that stopped reading - drops it)."""
+        now = self._clock()
+        n = 0
+        for c in list(self._conns):
+            if c.device_id != device_id or now - c.last_rx > self.stale_s:
+                continue
+            try:
+                c.outbox.put_nowait(frame)
+                n += 1
+            except asyncio.QueueFull:
+                log.warning("socket outbox full", extra={"device": str(device_id)})
+        return n
 
 
 # --- FCM HTTP v1 ---------------------------------------------------------------------
@@ -390,10 +420,12 @@ class PushService:
         *,
         run_done_min_s: float = 20.0,
         approval_delay_s: float = 1.0,
+        socket_push: bool = False,
     ) -> None:
         self._sm = sessionmaker
         self.fcm = fcm
         self.presence = presence
+        self._socket = socket_push
         self._run_done_min_s = run_done_min_s
         # a follow-up run's approval is answered automatically within milliseconds
         # (decision 153); waiting a moment avoids a notification that flashes up
@@ -404,7 +436,8 @@ class PushService:
 
     @property
     def enabled(self) -> bool:
-        return self.fcm is not None
+        """FCM is configured, or devices without a token get pushes on their socket."""
+        return self.fcm is not None or self._socket
 
     def listener(self, env: Envelope) -> None:
         if not self.enabled:
@@ -657,19 +690,22 @@ class PushService:
         ttl_s: int,
         collapse_key: str | None,
     ) -> None:
-        assert self.fcm is not None  # noqa: S101  # only called while enabled
         async with self._sm() as s:
             rows = (
                 await s.execute(
-                    select(Device.id, Device.fcm_token, Device.notify).where(
-                        ~Device.revoked, Device.fcm_token.is_not(None)
-                    )
+                    select(Device.id, Device.fcm_token, Device.notify).where(~Device.revoked)
                 )
             ).all()
         targets = [
             (dev_id, tok) for dev_id, tok, notify in rows if notify_settings(notify)[setting]
         ]
         for dev_id, tok in targets:
+            if tok is None:
+                if self._socket:
+                    await self._to_socket(dev_id, kind, ref, data)
+                continue
+            if self.fcm is None:
+                continue
             result = await self.fcm.send(
                 tok, data, high=high, ttl_s=ttl_s, collapse_key=collapse_key
             )
@@ -697,6 +733,18 @@ class PushService:
                     extra={"kind": kind, "ref": ref, "device": str(dev_id),
                            "error": result.error, "unregistered": result.unregistered},
                 )  # fmt: skip
+
+    async def _to_socket(
+        self, dev_id: uuid.UUID, kind: str, ref: str, data: dict[str, str]
+    ) -> None:
+        """A device without a token (the desktop app): its open sockets, if any."""
+        if not self.presence.deliver(dev_id, {"type": "push", "data": dict(data)}):
+            return
+        async with self._sm() as s:
+            s.add(PushLog(device_id=dev_id, kind=kind, ref_id=ref, ok=True, error=SOCKET))
+            await s.commit()
+        log.info("push sent", extra={"kind": kind, "ref": ref, "device": str(dev_id),
+                                     "socket": True, "via": SOCKET})  # fmt: skip
 
 
 async def _was_pushed(s: AsyncSession, kind: str, ref: str) -> bool:
@@ -762,9 +810,11 @@ def build_push(
     project_id: str | None,
     run_done_min_s: float,
     transport: httpx.AsyncBaseTransport | None = None,
+    socket_push: bool = True,
 ) -> PushService:
-    """The app's push service; disabled (with an ERROR log when it was configured but
-    could not be loaded) if there is no usable service account."""
+    """The app's push service. FCM is off (with an ERROR log when it was configured but
+    could not be loaded) without a usable service account; devices without a token get
+    their pushes on the socket either way (`socket_push`)."""
     fcm: FcmClient | None = None
     if service_account_file is not None:
         try:
@@ -772,4 +822,6 @@ def build_push(
             fcm = FcmClient(sa, project_id, transport=transport)
         except PushConfigError as exc:
             log.error("push disabled", extra={"reason": str(exc)})
-    return PushService(sessionmaker, fcm, presence, run_done_min_s=run_done_min_s)
+    return PushService(
+        sessionmaker, fcm, presence, run_done_min_s=run_done_min_s, socket_push=socket_push
+    )

@@ -86,8 +86,9 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     "error": frozenset({"code", "message", "ref_id"}),
 }
 
-# Frames sent directly on one socket (no `seq`, never replayed).
-CONNECTION_FRAMES = ("hello.ok", "ack", "error", "pong", "keepalive")
+# Frames sent directly on one socket (no `seq`, never replayed). `push` (API 21): the push
+# data of `delve.push` for a device without an FCM token (the desktop app).
+CONNECTION_FRAMES = ("hello.ok", "ack", "error", "pong", "keepalive", "push")
 
 # Client frames and the keys of their `data` (required, optional).
 CLIENT_FRAMES: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
