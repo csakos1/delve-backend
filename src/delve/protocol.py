@@ -83,6 +83,10 @@ SERVER_EVENTS: Mapping[str, frozenset[str]] = {
     # N1: a collector batch brought new stories (the app re-reads GET /api/v1/news);
     # texts (N1c, API 16): how many article texts arrived
     "news.updated": frozenset({"new", "texts", "updated_at"}),
+    # I0 (API 23): an item was cleared or brought back (the app re-reads GET /api/v1/inbox;
+    # what enters or leaves by itself comes with its own event: approval.*, watch.item,
+    # news.updated, system.updated, schedule.updated)
+    "inbox.updated": frozenset({"open", "updated_at"}),
     "error": frozenset({"code", "message", "ref_id"}),
 }
 

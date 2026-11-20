@@ -33,6 +33,7 @@ from delve.db.models import (
     Watch,
     WatchItem,
 )
+from delve.inbox import item_out as inbox_item_out
 from delve.llama import Props
 from delve.mirror import mirror_out
 from delve.news import item_out as news_item_out
@@ -213,6 +214,28 @@ def shapes() -> dict[str, Any]:
         # last_status: ok|not_modified|skipped|error|null; origin: import|app|agent
         "news_source": _keys(news_source_out(nsource)),
         "news_settings": _keys(news_settings_out(None)),
+        # I0 (API 23): GET /api/v1/inbox and the answer of POST /api/v1/inbox/done and
+        # .../undo -> {data: [inbox_item], done: [inbox_item + done_at], open, approvals,
+        # updated_at}. kind: approval|late_approval|watch_hit|must_read|feed_failing|
+        # switch_failed|schedule_failed; id: "<kind>:<ref>"; the thing itself is under its
+        # own key (approval, hit: watch_item, story: news_item, feed: news_source, switch:
+        # llama_switch, schedule), the others are null; source: null when unknown
+        "inbox_item": {
+            **_keys(inbox_item_out("approval", "a", _T, title="t", source="s")),
+            "approval": "approval|null",
+            "hit": "watch_item|null",
+            "story": "news_item|null",
+            "feed": "news_source|null",
+            "switch": "llama_switch|null",
+            "schedule": "schedule|null",
+        },
+        "inbox": {
+            "data": "inbox_item[]",
+            "done": "inbox_item[]",
+            "open": True,
+            "approvals": True,
+            "updated_at": True,
+        },
         "stats_gpu": {
             **_keys({"index": 0, "name": "n"}),
             "power": "stats_series",

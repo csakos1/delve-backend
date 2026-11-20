@@ -158,6 +158,9 @@ the desktop agent's instead.
 | `GET` | `/api/v1/watches/{slug}` | `watch`; 404 `watch_not_found` |
 | `GET` | `/api/v1/watches/{slug}/items?verdict=&before=&limit=` | `{data: [watch_item], next_before}`, newest first; `verdict`: comma list of `pending`, `match`, `reject`, `mechanical`, `error`, or `hits` (= `match,mechanical`); 422 `invalid_verdict` |
 | `POST` | `/api/v1/watches/{slug}/pause\|resume\|run` | the watcher's cron job through the helper → `watch`; 409 `watch_job_missing`, 503 `helper_unavailable`, 502 `helper_failed` |
+| `GET` | `/api/v1/inbox` | API 23: the `inbox` view (below): what needs the reader, newest first |
+| `POST` | `/api/v1/inbox/done` | `{id}` clears an open item → the `inbox` view; 404 `inbox_item_not_found`, 409 `not_doneable` (an approval) |
+| `POST` | `/api/v1/inbox/undo` | `{id}` takes a clearing back → the `inbox` view; 404 `inbox_item_not_found` |
 | `POST` | `/api/v1/mirror/phone` | `{events: [{op: post\|remove, key, app?, title?, text?, category?, hidden?, icon?}]}` (1-32 events, in order) → `{accepted, desk: {connected, last_seen_s}}`; see "Notification mirroring" |
 | `GET` | `/api/v1/mirror` | `{desk: {connected, last_seen_s}}`: is the desktop agent fetching |
 | `GET` | `/api/v1/desk/next?wait=` | the desktop agent's token: `{commands: [...]}`, waits up to `wait` seconds (0-30, default 25) for the first one |
@@ -210,7 +213,8 @@ Server events: `conversation.created`, `conversation.updated`, `message.created`
 `run.updated`, `run.finished`, `tool.started`, `tool.completed` (both `{step}`),
 `approval.request`, `approval.updated`, `reasoning.final`, `context.updated`,
 `health.status`, `card.new`, `system.updated`, `schedule.updated`, `schedule.deleted` (`{id}`),
-`watch.updated`, `watch.item`, `news.updated` (`{new, texts, updated_at}`), `error`, plus `keepalive` every 20 s, and
+`watch.updated`, `watch.item`, `news.updated` (`{new, texts, updated_at}`),
+`inbox.updated` (`{open, updated_at}`), `error`, plus `keepalive` every 20 s, and
 `push` (API 21, see "Push notifications") on the socket of a device without an FCM token. Close codes: 4400 protocol error, 4401 unauthorized,
 4408 hello timeout or slow consumer.
 
@@ -370,7 +374,7 @@ explanation (`At 08:52, 12:52, and 20:52 every day`).
 | `conversation_mode`, `conversation_id`, `conversation_title` | `new`: a new conversation (origin `schedule`) for every run; `fixed`: always that conversation (unarchived when a run lands in it) |
 | `thinking` | the schedule's own setting: it wins over the conversation's |
 | `next_run_at` | `null` while disabled |
-| `last_run_at`, `last_status`, `last_error`, `last_run_id` | the last firing: for a prompt the status of its latest run (`queued` … `completed`, `failed`, `cancelled`), or `failed` with `last_error` (`conversation_missing`) when it could not be queued; for the brief `ok` or `failed` |
+| `last_run_at`, `last_status`, `last_error`, `last_run_id` | the last firing: for a prompt the status of its latest run (`queued` … `completed`, `failed`, `cancelled`), or `failed` with `last_error` when it could not be queued (`conversation_missing`) or its time was missed while the backend was down (`missed`, API 23; until it runs again); for the brief `ok` or `failed` |
 
 Every `DELVE_SCHEDULE_TICK_S` (30 s; sooner when a schedule changes or the next one is
 due) the enabled schedules whose time has passed fire once, then the next time is taken
@@ -439,6 +443,40 @@ last_matched, errors_in_row, hits, hits_24h, pending, rejected, last_hit_at, sto
 defined_at, updated_at}`. `watch_item`: `{id, slug, item_id, title, url, price,
 price_value, location, posted, excerpt, reserved, verdict, reason, seen_at, judged_at,
 notified_at, available_at}`.
+
+### Inbox
+
+One list of what needs the reader (I0, API 23). Nothing is copied: `GET /api/v1/inbox` reads
+the tables that own the things, and the `inbox_done` table (migration 0018) says what was
+cleared.
+
+| `kind` | Enters | Leaves |
+|---|---|---|
+| `approval` | an approval the agent waits for | when it is answered or the agent stops waiting (it cannot be cleared) |
+| `late_approval` | the agent stopped waiting, still approvable | when it is answered or `expires_at` passes |
+| `watch_hit` | a listing with verdict `match` or `mechanical` that was to be pushed (`notify`) | when cleared, or after 7 days |
+| `must_read` | a lead story scored 9, not read | when cleared or read, or after 7 days |
+| `feed_failing` | an enabled feed with 3 failed rounds in a row | when cleared, or when it works again; back if it fails anew after working |
+| `switch_failed` | `llama.switch` is `failed` or `down` | when cleared or dismissed; another failed switch is a new item |
+| `schedule_failed` | a schedule's `last_status` is `failed` - its last run failed, it could not be queued, or its time was missed (`last_error: missed`, set when a due time is skipped) | when cleared, or when it runs again |
+
+Finished runs, the morning brief and ordinary stories never enter.
+
+The view is `{data: [inbox_item], done: [inbox_item + done_at], open, approvals,
+updated_at}`: `data` newest first (`at`), `done` what was cleared today (Europe/Budapest),
+`open` the number of items, `approvals` how many of them can be answered. An `inbox_item`
+is `{id: "<kind>:<ref>", kind, at, title, source, doneable}` with the thing itself under
+its own key - `approval`, `hit` (`watch_item`), `story` (`news_item`), `feed`
+(`news_source`), `switch` (`llama_switch`), `schedule` - and the other keys `null`. `title`
+is the gist (the command, the listing, the headline, the feed's address, the model that did
+not load, the schedule's name), `source` where it comes from (the chat, the watcher, the
+publisher, the topic, the model before, the error).
+
+Clearing writes `inbox_done` and publishes `inbox.updated`; what enters or leaves by itself
+comes with the event of its own table (`approval.*`, `watch.item`, `news.updated`,
+`system.updated`, `schedule.updated`), on which a client reads the view again. The app
+clears a story it showed and a hit it opened; an approval is answered through
+`POST /api/v1/approvals/{request_id}` as everywhere.
 
 ### Observability
 

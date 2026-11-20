@@ -387,6 +387,8 @@ async def test_catch_up_within_an_hour_skip_after(sx: Env) -> None:
     assert run.schedule_id == uuid.UUID(a["id"])
     late = await sx.schedule(b["id"])
     assert late.next_run_at == local(2026, 10, 22, 8, 0) and late.last_run_at is None
+    # I0: a missed time is said as a failure (the Inbox shows it) until the next run
+    assert (late.last_status, late.last_error) == ("failed", "missed")
     updated = {e["id"]: e for e in sx.events("schedule.updated")}
     assert set(updated) >= {a["id"], b["id"]}  # + the brief, timed on its first pass
 

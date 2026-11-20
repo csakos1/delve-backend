@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from delve import API_REVISION, REVISION, __version__
 from delve.api import attachments as attachments_api
 from delve.api import devices, rest, ws
+from delve.api import inbox as inbox_api
 from delve.api import mirror as mirror_api
 from delve.api import news as news_api
 from delve.api import persona as persona_api
@@ -30,6 +31,7 @@ from delve.config import Settings, get_settings
 from delve.db.session import make_engine, make_sessionmaker, ping
 from delve.events import EventHub
 from delve.hermes.client import HermesClient, ThinkingRoute
+from delve.inbox import InboxService
 from delve.llama import LlamaClient
 from delve.mirror import MirrorService
 from delve.news import NewsService
@@ -171,6 +173,7 @@ def create_app(
             helper=helper,
         )
         app.state.news = news
+        app.state.inbox = InboxService(sessionmaker, hub, switch=lambda: system.switch)
 
         async def side_work() -> bool:
             """Between runs: a watcher's verdict first (it may be a hit), then News."""
@@ -231,6 +234,7 @@ def create_app(
     app.include_router(mirror_api.router)
     app.include_router(persona_api.router)
     app.include_router(news_api.router)
+    app.include_router(inbox_api.router)
     app.include_router(ws.router)
 
     @app.get("/api/v1/health")

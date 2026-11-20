@@ -1,5 +1,5 @@
 {
-  "api_revision": 22,
+  "api_revision": 23,
   "rest": [
     {
       "method": "GET",
@@ -115,6 +115,21 @@
     {
       "method": "GET",
       "path": "/api/v1/health",
+      "query": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inbox",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/inbox/done",
+      "query": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/inbox/undo",
       "query": []
     },
     {
@@ -816,6 +831,27 @@
       "push_max": true,
       "setup": true
     },
+    "inbox_item": {
+      "approval": "approval|null",
+      "at": true,
+      "doneable": true,
+      "feed": "news_source|null",
+      "hit": "watch_item|null",
+      "id": true,
+      "kind": true,
+      "schedule": "schedule|null",
+      "source": true,
+      "story": "news_item|null",
+      "switch": "llama_switch|null",
+      "title": true
+    },
+    "inbox": {
+      "data": "inbox_item[]",
+      "done": "inbox_item[]",
+      "open": true,
+      "approvals": true,
+      "updated_at": true
+    },
     "stats_gpu": {
       "index": true,
       "name": true,
@@ -971,6 +1007,10 @@
       "health.status": [
         "hermes",
         "hermes_version"
+      ],
+      "inbox.updated": [
+        "open",
+        "updated_at"
       ],
       "message.created": [
         "conversation_id",

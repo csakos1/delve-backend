@@ -37,6 +37,7 @@ EXPECTED_TABLES = {
     "news_sources",
     "news_items",
     "news_batches",
+    "inbox_done",  # I0
 }
 
 

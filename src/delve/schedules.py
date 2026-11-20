@@ -565,6 +565,8 @@ class ScheduleService:
                 return
             missed = row.next_run_at
             row.next_run_at = next_fire(row.cron, now)
+            # I0: said as a failure, until the next time it fires (the Inbox shows it)
+            row.last_status, row.last_error = "failed", "missed"
             row.updated_at = now
             await s.commit()
             out = (await _render(s, [row]))[0]

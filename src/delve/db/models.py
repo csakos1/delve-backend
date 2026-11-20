@@ -644,3 +644,20 @@ class NewsBatch(Base):
     new: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error: Mapped[str | None] = mapped_column(Text)
     ingested_at: Mapped[datetime] = _now()
+
+
+class InboxDone(Base):
+    """An Inbox item the reader cleared (I0). The Inbox itself is read from the other
+    tables; this says what not to show: `kind` and `ref` name the item, `mark` the state it
+    was cleared in (a notice - a failing feed, a failed switch or schedule - comes back
+    when it fails anew), `item` is the item as it was shown (the day's Done list)."""
+
+    __tablename__ = "inbox_done"
+
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    mark: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    item: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    done_at: Mapped[datetime] = mapped_column(TZ, nullable=False)
+
+    __table_args__ = (Index(None, "done_at"),)

@@ -69,7 +69,7 @@ def pg_url() -> str:
 # --- database fixtures for the run manager / API tests --------------------------------
 
 TABLES = (
-    "news_items, news_sources, news_topics, news_batches, "
+    "inbox_done, news_items, news_sources, news_topics, news_batches, "
     "watch_items, watches, gpu_samples, push_log, devices, system_state, schedules, "
     "card_ingest_offsets, cards, approvals, tool_steps, run_events, runs, attachments, "
     "messages, conversations"
