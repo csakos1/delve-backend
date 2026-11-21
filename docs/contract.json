@@ -1,5 +1,5 @@
 {
-  "api_revision": 23,
+  "api_revision": 24,
   "rest": [
     {
       "method": "GET",
@@ -731,7 +731,9 @@
       "setup": true,
       "source": true,
       "sources": true,
+      "summary_basis": true,
       "summary_hu": true,
+      "text_publisher": true,
       "text_state": true,
       "title": true,
       "topic": true,
@@ -760,7 +762,9 @@
       "setup": true,
       "source": true,
       "sources": true,
+      "summary_basis": true,
       "summary_hu": true,
+      "text_publisher": true,
       "text_state": true,
       "title": true,
       "topic": true,

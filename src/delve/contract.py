@@ -176,7 +176,9 @@ def shapes() -> dict[str, Any]:
         # published_at}] for a release row; score .. summary_hu: null until scored /
         # summarised; text_state: null|queued|ok|failed (N1c, API 16); original_url: the
         # publisher's address once a Google News link is resolved, else url;
-        # feedback: more|less|null
+        # feedback: more|less|null; summary_basis: text|excerpt|null - excerpt: written from
+        # the feed's excerpt, no article came (N4b, API 24); text_publisher: the publisher
+        # of the text when it is a merged item's article, else null (N4b, API 24)
         "news_item": {**_keys(news_item_out(nitem)), "releases": "news_release[]|null"},
         "news_release": _keys({"tag": "t", "url": "u", "published_at": "p"}),
         # N1: GET /api/v1/news/items/{id}, its PATCH and POST .../text (N1c, API 16): text

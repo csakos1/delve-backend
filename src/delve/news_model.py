@@ -37,6 +37,7 @@ SUMMARY_MAX_TOKENS = 400
 SUMMARY_TEXT_CHARS = 6000  # ~1.5-2k tokens of the article
 SUMMARY_MIN_CHARS = 40
 SUMMARY_MAX_CHARS = 900
+EXCERPT_SUMMARY_MAX_TOKENS = 250
 
 SCALE = (
     "Scores: 0 = not for this reader, 3 = loosely related, 5 = would probably open it, "
@@ -163,6 +164,19 @@ def summary_body(title: str, publisher: str | None, text: str) -> dict[str, Any]
         f"{head}\n\n<article>\n{text[:SUMMARY_TEXT_CHARS]}\n</article>"
     )
     return _body(SUMMARY_SYSTEM, user, SUMMARY_MAX_TOKENS, 0.3)
+
+
+def excerpt_summary_body(title: str, publisher: str | None, excerpt: str) -> dict[str, Any]:
+    """N4b: no article could be fetched - a shorter summary from the feed's own excerpt."""
+    head = f"Title: {title}" + (f"\nPublisher: {publisher}" if publisher else "")
+    user = (
+        "The article itself could not be fetched; below is only the short excerpt its feed "
+        "gave. Summarise it in Hungarian in 1-2 sentences (at most 40 words): what happened, "
+        "with the names and numbers it gives. Only what the excerpt says - nothing added, no "
+        'opinion, no "the excerpt says". Answer with the summary only.\n\n'
+        f"{head}\n\n<article>\n{excerpt}\n</article>"
+    )
+    return _body(SUMMARY_SYSTEM, user, EXCERPT_SUMMARY_MAX_TOKENS, 0.3)
 
 
 def parse_summary(text: str) -> str:

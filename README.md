@@ -43,6 +43,7 @@ fixtures) lives in [`delve-infra`](https://github.com/csakos1/delve-infra).
 | 19 | News (N1c): article texts the agent's collector fetches (Google News links through its browser, robots.txt), Hungarian summaries, "Fetch text" | done |
 | 20 | News for the app (N2, API 17-20): the News page's sections by topic, a score floor for the lists; the Dashboard block shows only stories scored 5 or more; a feed's newest story and a pushed story's number of sources for News settings and the notification (API 20) | done |
 | 21 | Pushes on the WebSocket for devices without an FCM token (the Linux desktop app, L3): the connection frame `push` with the same data | done |
+| 22 | News texts for more stories (N4b, API 24): every story of the last day scored 6 or more; a failed article tried from the story's merged items; a summary from the feed's excerpt when no article came (`summary_basis`, `text_publisher`) | done |
 
 ## Development
 
@@ -673,7 +674,10 @@ the app shows nothing below 5 - the best score first, then the newest, one per t
 other topics have one to show), `new` (how many of those are unread), `updated_at` (the last batch),
 `state` (`empty` before the first batch, else `ok`), `sources`, `failing`, `weekly`
 (`{count}` on Mondays from `digest_at` on - the Dashboard's "Last week" row - else null).
-`summary_hu` is null until the story has a text and its summary.
+`summary_hu` is null until the story has a text and its summary (or, with no article,
+a summary of its excerpt - N4b). `summary_basis` (API 24): `text`, `excerpt` (written
+from the feed's excerpt, no article came) or null without a summary. `text_publisher`
+(API 24): the publisher of the text when it is a merged item's article, else null.
 
 **The model steps (N1b)** run between runs (`RunManager.side_work`, after a watcher's
 verdict) with direct llama calls - no tools, no thinking, the items marked as data - and
@@ -702,7 +706,10 @@ did not move (our own requests do not count). One step at a time, the first that
    reader's own tools).
 4. **summary** (N1c) - one story with its article text, the saved ones first, then the
    best: a Hungarian summary of 2-3 sentences from the first ~6000 characters, facts from
-   the text only (`summary_hu`; the app marks it "AI summary"). Two tries.
+   the text only (`summary_hu`; the app marks it "AI summary"). Two tries. Then (N4b) a
+   story of the last 48 hours whose article could not be fetched at all and whose feed
+   excerpt has at least 160 characters: 1-2 sentences from the excerpt only
+   (`summary_basis: excerpt`); a text that comes later is summarised again.
 
 A failed call (llama down, no usable line) counts a try and pauses the steps for a minute.
 A step that waits for llama (in use, or unavailable) logs `news waiting` after half an hour
@@ -720,8 +727,9 @@ story; if more match, they are listed with their ids.
 
 **Article texts (N1c, API 16)** - which stories, and how (delve-infra D-59): every poll
 the backend queues (`text_state: queued`, `text_try` + 1) the lead stories without a text
-state that deserve one - the best five of each topic of the last 24 hours and every 9
-(once grouped and explained, score 5 or more), the saved ones, and the ones the user asks
+state that deserve one - the best five of each topic of the last 24 hours and every story
+scored 6 or more (N4b; before: every 9) of those hours (once grouped and explained, score 5
+or more), the saved ones, and the ones the user asks
 for with `POST /api/v1/news/items/{id}/text` ("Fetch text") - and writes the queued ones
 (at most 40: asked, saved, best first) to `wanted.json` when the list changed. The agent's
 `news-text` job (hourly, :47) opens a Google News link in its browser only up to the
@@ -729,10 +737,13 @@ publisher's address, reads robots.txt with the `delve-news` token, fetches the p
 extracts the text, and answers with a `text-*.json`. An answer counts for the try it was
 asked for: `ok` with at least 500 characters is the text (`text`, `text_url` - the
 publisher's address, shown as `original_url`), anything else `failed` with the job's
-status in `text_error` (`robots`, `no_text`, `unresolved`, `http_403`, ...). A story queued
-for 26 hours without an answer fails with `timeout`. "Fetch text" queues a failed story
-again (a new try); a story with its text stays as it is; a day of releases has no article
-(409). "Fetch text" also starts the `news-text` job at once through the helper
+status in `text_error` (`robots`, `no_text`, `unresolved`, `http_403`, ...). Before a
+story fails (N4b), the articles of its merged items are tried in turn - by id, at most
+three, each a new try, its address in `wanted.json` under the story's id (`text_from`): the
+first one that comes is the story's text (`text_url` its address, `text_publisher` its
+publisher). A story queued for 26 hours without an answer fails with `timeout`. "Fetch
+text" queues a failed story again (a new try, from its own article); a story with its text
+stays as it is; a day of releases has no article (409). "Fetch text" also starts the `news-text` job at once through the helper
 (`agent.cron.list` once for its id, then `agent.cron.run`; API 19): the story's
 `text_now` is true for five minutes or until the answer, and the backend looks for the
 answer every 3 s for three minutes instead of every poll - the text is there in seconds.

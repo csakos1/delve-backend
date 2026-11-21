@@ -609,7 +609,15 @@ class NewsItem(Base):
     text_at: Mapped[datetime | None] = mapped_column(TZ)
     text_try: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     text_requested_at: Mapped[datetime | None] = mapped_column(TZ)
+    # N4b: the merged item whose article is fetched when the story's own could not be
+    # (null: its own), and that article's publisher once its text came
+    text_from: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("news_items.id", ondelete="SET NULL")
+    )
+    text_publisher: Mapped[str | None] = mapped_column(Text)
     summary_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # N4b: 'excerpt' - the summary was written from the feed's excerpt (no article came)
+    summary_basis: Mapped[str | None] = mapped_column(Text)
     read_at: Mapped[datetime | None] = mapped_column(TZ)
     saved_at: Mapped[datetime | None] = mapped_column(TZ)
     feedback: Mapped[str | None] = mapped_column(Text)
@@ -620,6 +628,7 @@ class NewsItem(Base):
         CheckConstraint("kind IN ('feed','release')", name="kind"),
         CheckConstraint("feedback IN ('more','less')", name="feedback"),
         CheckConstraint("text_state IN ('queued','ok','failed')", name="text_state"),
+        CheckConstraint("summary_basis IN ('excerpt')", name="summary_basis"),
         Index(
             "ix_news_items_text_state",
             "text_state",

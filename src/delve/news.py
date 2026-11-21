@@ -50,6 +50,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from delve.db.models import NewsBatch, NewsItem, NewsSource, NewsTopic, SystemState
 from delve.events import EventHub
@@ -59,6 +60,7 @@ from delve.news_model import (
     ModelAnswerError,
     TopicRef,
     content_of,
+    excerpt_summary_body,
     group_body,
     parse_groups,
     parse_scores,
@@ -129,6 +131,9 @@ RESCORE_MAX_HOURS = 48  # = SCORE_WINDOW: older stories would not be scored agai
 # N1c: article texts and summaries
 TEXT_TOP_PER_TOPIC = 5  # the best of each topic of the last day get a text
 TEXT_MIN_SCORE = 5
+TEXT_ALL_SCORE = 6  # N4b: and every story of the last day scored this or more
+TEXT_SIBLINGS_MAX = 3  # N4b: a story whose article failed tries this many merged items'
+EXCERPT_SUMMARY_MIN_CHARS = 160  # N4b: a shorter excerpt is a title and a publisher
 TEXT_WANTED_MAX = 40  # in wanted.json (the collector asks at most this many a run)
 TEXT_QUEUE_MAX = timedelta(hours=26)  # queued longer: the collector did not answer
 TEXT_CHARS = 30_000
@@ -322,7 +327,11 @@ def item_out(i: NewsItem, sources: int = 1) -> dict[str, Any]:
         "why": i.why,
         "setup": i.setup,
         "summary_hu": i.summary_hu,
+        # N4b (API 24): text | excerpt | null - what the summary was written from
+        "summary_basis": (i.summary_basis or "text") if i.summary_hu else None,
         "text_state": i.text_state,
+        # N4b (API 24): the publisher of the text when it is a merged item's article
+        "text_publisher": i.text_publisher if i.text_state == "ok" else None,
         "original_url": i.text_url or i.url,
         "read": i.read_at is not None,
         "saved": i.saved_at is not None,
@@ -809,27 +818,68 @@ class NewsService:
             log.warning("news texts refused", extra={"file": name, "error": str(exc)[:200]})
             return 0
         now = self._clock()
-        ok = failed = 0
+        ok = failed = again = 0
         async with self._sm() as s:
             for r in results:
                 row = await s.get(NewsItem, r.id, with_for_update=True)
                 if row is None or row.text_state != "queued" or row.text_try != r.attempt:
                     continue
+                good = r.status == "ok" and bool(r.text) and len(r.text or "") >= TEXT_MIN_CHARS
                 row.text_at, row.text_requested_at = now, None
-                if r.final_url:
+                # a merged item's address is the story's own only if its text is used
+                if r.final_url and (row.text_from is None or good):
                     row.text_url = r.final_url
-                if r.status == "ok" and r.text and len(r.text) >= TEXT_MIN_CHARS:
+                if good:
+                    sib = await s.get(NewsItem, row.text_from) if row.text_from else None
+                    if sib is not None and not r.final_url:
+                        row.text_url = sib.url
+                    row.text_publisher = sib.publisher if sib is not None else None
                     row.text, row.text_state, row.text_error = r.text, "ok", None
-                    row.summary_hu, row.summary_attempts = None, 0
+                    row.summary_hu, row.summary_attempts, row.summary_basis = None, 0, None
                     ok += 1
+                    continue
+                error = r.status if r.status != "ok" else "no_text"
+                nxt = await self._next_sibling(s, row)
+                if nxt is not None:
+                    # N4b: the same event from another publisher - tried at the next run
+                    row.text_from, row.text_try, row.text_error = nxt, row.text_try + 1, error
+                    again += 1
                 else:
-                    row.text_state = "failed"
-                    row.text_error = r.status if r.status != "ok" else "no_text"
+                    row.text_state, row.text_error = "failed", error
                     failed += 1
             s.add(NewsBatch(name=name, at=at, items=len(results), new=ok))
             await s.commit()
-        log.info("news texts read", extra={"file": name, "ok": ok, "failed": failed})
+        log.info(
+            "news texts read", extra={"file": name, "ok": ok, "failed": failed, "again": again}
+        )
+        if again:
+            await self.refresh_wanted()
         return ok
+
+    async def _next_sibling(self, s: AsyncSession, row: NewsItem) -> int | None:
+        """N4b: the next merged item of a story whose article could not be fetched (by id,
+        after the one just tried), while fewer than TEXT_SIBLINGS_MAX were tried."""
+        if row.dup_of is not None or row.kind != "feed":
+            return None
+        after = row.text_from or 0
+        tried = 0
+        if row.text_from is not None:
+            tried = int(
+                await s.scalar(
+                    select(func.count())
+                    .select_from(NewsItem)
+                    .where(NewsItem.dup_of == row.id, NewsItem.id <= after)
+                )
+                or 0
+            )
+        if tried >= TEXT_SIBLINGS_MAX:
+            return None
+        return await s.scalar(
+            select(NewsItem.id)
+            .where(NewsItem.dup_of == row.id, NewsItem.kind == "feed", NewsItem.id > after)
+            .order_by(NewsItem.id)
+            .limit(1)
+        )
 
     # --- article texts (N1c) ---------------------------------------------------------------
 
@@ -851,9 +901,16 @@ class NewsService:
                     .values(text_state="queued", text_at=now, text_error=None,
                             text_try=NewsItem.text_try + 1)
                 )  # fmt: skip
+            sib = aliased(NewsItem)
             rows = (
                 await s.execute(
-                    select(NewsItem.id, NewsItem.url, NewsItem.gn, NewsItem.text_try)
+                    select(
+                        NewsItem.id,
+                        func.coalesce(sib.url, NewsItem.url).label("url"),
+                        func.coalesce(sib.gn, NewsItem.gn).label("gn"),
+                        NewsItem.text_try,
+                    )
+                    .outerjoin(sib, sib.id == NewsItem.text_from)
                     .where(NewsItem.text_state == "queued")
                     .order_by(
                         NewsItem.text_requested_at.desc().nulls_last(),
@@ -883,9 +940,9 @@ class NewsService:
         return True
 
     async def _text_picks(self, s: AsyncSession, now: datetime) -> list[int]:
-        """The stories without a text state that deserve one: the best three of each topic
-        of the last day and every must-read (once grouped and explained), the saved ones,
-        the ones the user asked for."""
+        """The stories without a text state that deserve one: the best five of each topic
+        of the last day and every one scored TEXT_ALL_SCORE or more (once grouped and
+        explained), the saved ones, the ones the user asked for."""
         rows = (
             await s.execute(
                 select(NewsItem.id, NewsItem.topic_id, NewsItem.score, NewsItem.text_state)
@@ -907,7 +964,7 @@ class NewsService:
         for r in rows:
             top = seen[r.topic_id] < TEXT_TOP_PER_TOPIC
             seen[r.topic_id] += 1
-            if (top or r.score >= PUSH_MIN_SCORE) and r.text_state is None:
+            if (top or r.score >= TEXT_ALL_SCORE) and r.text_state is None:
                 pick.append(r.id)
         asked = and_(NewsItem.kind == "feed", NewsItem.text_state.is_(None))
         pick += (
@@ -938,7 +995,8 @@ class NewsService:
             if row.kind != "feed":
                 raise NewsError("news_no_text", "a day of releases has no article", 409)
             if row.text_state in (None, "failed"):
-                row.text_state, row.text_requested_at = None, now
+                # the story's own article first again (a merged one after it fails)
+                row.text_state, row.text_requested_at, row.text_from = None, now, None
             elif row.text_state == "queued":
                 row.text_requested_at = row.text_requested_at or now
             await s.commit()
@@ -1292,6 +1350,31 @@ class NewsService:
         )
         if rows:
             return "summary", rows
+        # N4b: no article came for a wanted story - a summary from its feed's excerpt
+        rows = list(
+            (
+                await s.execute(
+                    self._base()
+                    .where(
+                        live,
+                        NewsItem.kind == "feed",
+                        NewsItem.text_state == "failed",
+                        NewsItem.summary_hu.is_(None),
+                        NewsItem.summary_attempts < SUMMARY_MAX_ATTEMPTS,
+                        func.length(NewsItem.excerpt) >= EXCERPT_SUMMARY_MIN_CHARS,
+                        NewsItem.seen_at >= now - SCORE_WINDOW,
+                    )
+                    .order_by(
+                        NewsItem.saved_at.desc().nulls_last(),
+                        NewsItem.score.desc().nulls_last(),
+                        NewsItem.id.desc(),
+                    )
+                    .limit(1)
+                )
+            ).scalars()
+        )
+        if rows:
+            return "summary", rows
         return None
 
     async def _prompt(self) -> tuple[list[TopicRef], str]:
@@ -1409,12 +1492,20 @@ class NewsService:
 
     async def _summary(self, rows: list[NewsItem]) -> dict[str, int]:
         r = rows[0]
-        text, tokens = await self._ask(summary_body(r.title, r.publisher, r.text or ""))
+        from_text = r.text_state == "ok"
+        body = (
+            summary_body(r.title, r.publisher, r.text or "")
+            if from_text
+            else excerpt_summary_body(r.title, r.publisher, r.excerpt or "")
+        )
+        text, tokens = await self._ask(body)
         summary = parse_summary(text)
         async with self._sm() as s:
             row = await s.get(NewsItem, r.id, with_for_update=True)
-            if row is not None and row.text_state == "ok":
+            # the text came (or went) while the model wrote: the next step writes it again
+            if row is not None and row.text_state == r.text_state and row.summary_hu is None:
                 row.summary_hu = summary
+                row.summary_basis = None if from_text else "excerpt"
             await s.commit()
         return tokens
 

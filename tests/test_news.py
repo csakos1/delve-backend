@@ -9,7 +9,7 @@ import io
 import json
 import os
 import stat
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1448,3 +1448,155 @@ async def test_a_summary_that_is_not_one(menv: ModelEnv) -> None:
     assert await menv.step() is False  # two tries: no more
     row = (await menv.rows())[0]
     assert (row.summary_hu, row.summary_attempts) == (None, 2)
+
+
+@pg
+async def test_every_story_of_six_or_more_gets_a_text(menv: ModelEnv) -> None:
+    """N4b: besides the best five of a topic, every story of the last day scored 6 or more
+    is wanted; a 5 below the first five is not."""
+    menv.drop(batch([item(n) for n in range(1, 10)]))
+    await menv.svc.ingest()
+    scores = {1: 9, 2: 8, 3: 7, 4: 7, 5: 7, 6: 6, 7: 6, 8: 5, 9: 4}
+    async with menv.db() as s:
+        for n, sc in scores.items():
+            await s.execute(
+                update(NewsItem).where(NewsItem.key == key(n))
+                .values(score=sc, scored_at=NOW, grouped_at=NOW, why="x")
+            )  # fmt: skip
+        await s.commit()
+    ids = {r.key: r.id for r in await menv.rows()}
+    assert await menv.svc.refresh_wanted() is True
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert sorted(w["id"] for w in wanted) == sorted(ids[key(n)] for n in range(1, 8))
+
+
+async def _merged(menv: ModelEnv, n: int, others: Sequence[int]) -> dict[int, int]:
+    """Items n and others, the others merged into n's story; {number: id}."""
+    menv.drop(batch([item(n, publisher="Lead")] + [
+        item(o, "t-news", publisher=f"Other {o}") for o in others
+    ]))  # fmt: skip
+    await menv.svc.ingest()
+    ids = {r.key: r.id for r in await menv.rows()}
+    i = {m: ids[key(m)] for m in (n, *others)}
+    async with menv.db() as s:
+        await s.execute(
+            update(NewsItem).where(NewsItem.id == i[n])
+            .values(score=9, scored_at=NOW, grouped_at=NOW, why="x")
+        )  # fmt: skip
+        await s.execute(
+            update(NewsItem).where(NewsItem.id.in_([i[o] for o in others])).values(dup_of=i[n])
+        )
+        await s.commit()
+    return i
+
+
+def _answer(menv: ModelEnv, id_: int, attempt: int, status: str, n: int, **kw: Any) -> None:
+    menv.drop(
+        {"v": 1, "at": iso(NOW), "items": [{"id": id_, "try": attempt, "status": status, **kw}]},
+        name=f"text-20261117T12000{n}Z-1.json",
+    )
+
+
+@pg
+async def test_a_failed_article_is_fetched_from_a_merged_item(menv: ModelEnv) -> None:
+    """N4b: the lead's article fails - the merged items' articles are tried in turn (a new
+    try each, their address in wanted.json); the one that comes is the story's text, with
+    its publisher and address. Fetch text starts from the story's own article again."""
+    i = await _merged(menv, 1, (2, 3))
+    await menv.svc.refresh_wanted()
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert [(w["id"], w["url"], w["try"]) for w in wanted] == [
+        (i[1], "https://o-news.example/1", 1)
+    ]
+    _answer(menv, i[1], 1, "robots", 1, final_url="https://lead.example/1")
+    await menv.svc.ingest()
+    row = next(r for r in await menv.rows() if r.id == i[1])
+    assert (row.text_state, row.text_from, row.text_try, row.text_url) == (
+        "queued",
+        i[2],
+        2,
+        "https://lead.example/1",
+    )
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert [(w["id"], w["url"], w["try"]) for w in wanted] == [
+        (i[1], "https://t-news.example/2", 2)
+    ]
+    # the second one is too short: the third is tried; its address is kept only with a text
+    _answer(menv, i[1], 2, "ok", 2, text="short", final_url="https://other.example/2")
+    await menv.svc.ingest()
+    row = next(r for r in await menv.rows() if r.id == i[1])
+    assert (row.text_from, row.text_try, row.text_url) == (i[3], 3, "https://lead.example/1")
+    long = "\n\n".join([ARTICLE.strip()] * 2)
+    _answer(menv, i[1], 3, "ok", 3, text=long)
+    await menv.svc.ingest()
+    story = await menv.svc.item(i[1])
+    assert (story["text_state"], story["text"], story["text_publisher"]) == ("ok", long, "Other 3")
+    assert story["original_url"] == "https://t-news.example/3"
+    assert story["publisher"] == "Lead"
+    # Fetch text after a failure starts with the story's own article
+    async with menv.db() as s:
+        await s.execute(update(NewsItem).where(NewsItem.id == i[1]).values(text_state="failed"))
+        await s.commit()
+    out = await menv.svc.request_text(i[1])
+    assert out["text_state"] == "queued"
+    wanted = json.loads((menv.news_dir / "wanted.json").read_text())["items"]
+    assert [(w["url"], w["try"]) for w in wanted] == [("https://o-news.example/1", 4)]
+
+
+@pg
+async def test_no_article_anywhere_is_summarised_from_the_excerpt(menv: ModelEnv) -> None:
+    """N4b: at most three merged items are tried; then the story has failed, and a long
+    enough feed excerpt gives a shorter summary marked `excerpt` (a short one gives none).
+    A text that comes later is summarised again from the text."""
+    excerpt = "A kitalált tájfutó-vb döntőjét új térképen rendezték, a rajtot elhalasztották. " * 3
+    menv.drop(batch([item(1, summary=excerpt), item(5, summary="Short.")]))
+    await menv.svc.ingest()
+    menv.drop(batch([item(n, "t-news") for n in (2, 3, 4, 6)], at=NOW + timedelta(minutes=1)))
+    await menv.svc.ingest()
+    ids = {r.key: r.id for r in await menv.rows()}
+    i = {n: ids[key(n)] for n in range(1, 7)}
+    async with menv.db() as s:
+        for lead in (1, 5):
+            await s.execute(
+                update(NewsItem).where(NewsItem.id == i[lead])
+                .values(score=8, scored_at=NOW, grouped_at=NOW, why="x")
+            )  # fmt: skip
+        await s.execute(
+            update(NewsItem).where(NewsItem.id.in_([i[2], i[3], i[4]])).values(dup_of=i[1])
+        )
+        await s.execute(update(NewsItem).where(NewsItem.id == i[6]).values(dup_of=i[5]))
+        await s.commit()
+    await menv.svc.refresh_wanted()
+    for attempt in (1, 2, 3, 4):  # its own, then the three merged ones
+        _answer(menv, i[1], attempt, "no_text", attempt)
+        await menv.svc.ingest()
+    _answer(menv, i[5], 1, "robots", 5)
+    await menv.svc.ingest()
+    _answer(menv, i[5], 2, "robots", 6)
+    await menv.svc.ingest()
+    rows = {r.id: r for r in await menv.rows()}
+    assert (rows[i[1]].text_state, rows[i[1]].text_try, rows[i[1]].text_error) == (
+        "failed",
+        4,
+        "no_text",
+    )
+    assert (rows[i[5]].text_state, rows[i[5]].text_try) == ("failed", 2)
+    menv.answers = ["A kitalált tájfutó-vb döntőjét új térképen rendezték, a rajt csúszott."]
+    assert await menv.step() is True
+    user = menv.llama.chats[-1]["messages"][1]["content"]
+    assert "could not be fetched" in user and excerpt.strip()[:60] in user
+    story = await menv.svc.item(i[1])
+    assert (story["summary_basis"], story["text_publisher"]) == ("excerpt", None)
+    assert story["summary_hu"].startswith("A kitalált tájfutó-vb")
+    assert await menv.step() is False  # the short excerpt gives no summary
+    assert (await menv.svc.item(i[5]))["summary_basis"] is None
+    # Fetch text, and this time it comes: the summary is written again, from the text
+    await menv.svc.request_text(i[1])
+    _answer(menv, i[1], 5, "ok", 7, text="\n\n".join([ARTICLE.strip()] * 2))
+    await menv.svc.ingest()
+    story = await menv.svc.item(i[1])
+    assert (story["text_state"], story["summary_hu"], story["summary_basis"]) == ("ok", None, None)
+    menv.answers = ["A kitalált tájfutó-világbajnokság döntőjét egy új térképen rendezték."]
+    assert await menv.step() is True
+    assert "<article>" in menv.llama.chats[-1]["messages"][1]["content"]
+    assert (await menv.svc.item(i[1]))["summary_basis"] == "text"
